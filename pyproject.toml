@@ -1,0 +1,16 @@
+[project]
+name = "jobsh"
+version = "0.1.0"
+description = "Local aggregator for German IT jobs"
+authors = [
+    { name = "julilili42", email = "Julian-jurcevic-2000@web.de" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+jobsh = "jobsh.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.11.17,<0.12.0"]
+build-backend = "uv_build"
