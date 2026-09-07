@@ -10,6 +10,22 @@ this problem. It gives coding agents a CLI backed by a frequently refreshed job
 index. Pinloop searches worldwide. I think a product focused on Germany can
 offer better coverage and a better local experience:
 
+Pinloop uses [Fantastic.jobs](https://fantastic.jobs/) for its job data. Their
+smallest API plan costs $95 per month for 20,000 jobs. That is too expensive for
+an experimental project, so jobsh will initially collect jobs directly from
+public ATS feeds instead. This requires more work, but keeps the project cheap
+and gives it control over coverage and freshness.
+
+A stronger free option is [freehire](https://github.com/strelov1/freehire), an
+open-source Go job aggregator with a public API. It already normalizes and
+deduplicates jobs from many ATS platforms and includes German sources such as
+Arbeitsagentur and Arbeitnow. The unofficial
+[Arbeitsagentur API](https://github.com/bundesAPI/jobsuche-api) and the free
+[Arbeitnow API](https://www.arbeitnow.com/api/job-board-api) may also help fill
+or measure gaps. Before building a crawler, the MVP should measure their German
+IT coverage. Direct ATS adapters are only needed where that coverage falls
+short.
+
 ```sh
 ssh jobsh
 ```
