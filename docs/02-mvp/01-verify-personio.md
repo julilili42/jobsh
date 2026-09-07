@@ -1,18 +1,26 @@
-# 1. Verify Personio
+# 1. Discover and verify Personio feeds
 
-Find 20 German employers with public Personio XML feeds and compare their feeds
-with their career pages.
+Query the latest [Common Crawl URL Index](https://commoncrawl.org/url-index) for
+distinct hosts below `jobs.personio.de`. Treat these archived URLs only as
+discovery candidates. Deduplicate the hosts and verify each current feed at
+`https://<account>.jobs.personio.de/xml?language=de`.
 
-Verify stable IDs, original links, relevant fields, German eligibility, usage
-terms, and whether a missing record reliably means that a job has closed. Save
-example responses and observation dates.
+Keep a manually reviewed reference sample of 20 Personio career pages. Use it to
+measure discovery gaps and compare feeds with their current career pages.
+
+For verified feeds, record the account, feed URL, discovery crawl, and
+observation date. Check stable IDs, original links, relevant fields, German
+eligibility, usage terms, and whether a missing record reliably means that a job
+has closed. Save representative index rows and XML responses.
 
 If Personio cannot support a reliable pilot, repeat the check with another ATS
 that exposes complete public employer feeds. Implement only the first provider
 that passes it.
 
-**Done:** 20 usable feeds or a documented reason to try the next ATS, recorded
-examples, known gaps, and an explicit refresh and closure contract.
+**Done:** a repeatable discovery command, a deduplicated list of verified feeds,
+coverage against the 20-page reference sample, recorded examples, known gaps,
+and an explicit refresh and closure contract.
 
-**Test:** every recorded XML file is well-formed, and the fixture set contains
-at least one position with an ID and title.
+**Test:** recorded Common Crawl rows produce unique candidate hosts; invalid
+feeds are rejected, and a valid XML fixture yields a position with an ID and
+title.
