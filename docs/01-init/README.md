@@ -8,19 +8,15 @@ properly.
 [Pinloop](https://github.com/pinloop-ai/pinloop-cli) is a compelling take on
 this problem. It gives coding agents a CLI backed by a frequently refreshed job
 index. Pinloop searches worldwide. I think a product focused on Germany can
-offer better coverage and a better local experience:
+offer better coverage and a better local experience. Pinloop uses
+[Fantastic.jobs](https://fantastic.jobs/) for its job data, whose smallest API
+plan costs $95 per month for 20,000 jobs. That is too expensive for an
+experimental project, so jobsh will initially collect jobs directly from public
+ATS feeds instead. This requires more work, but keeps the project cheap and
+gives it control over coverage and freshness.
 
-Pinloop uses [Fantastic.jobs](https://fantastic.jobs/) for its job data. Their
-smallest API plan costs $95 per month for 20,000 jobs. That is too expensive for
-an experimental project, so jobsh will initially collect jobs directly from
-public ATS feeds instead. This requires more work, but keeps the project cheap
-and gives it control over coverage and freshness.
-
-A stronger free option is [freehire](https://github.com/strelov1/freehire), an
-open-source Go job aggregator with a public API. It already normalizes and
-deduplicates jobs from many ATS platforms and includes German sources such as
-Arbeitsagentur and Arbeitnow. The unofficial
-[Arbeitsagentur API](https://github.com/bundesAPI/jobsuche-api) and the free
+The unofficial [Arbeitsagentur API](https://github.com/bundesAPI/jobsuche-api)
+and the free
 [Arbeitnow API](https://www.arbeitnow.com/api/job-board-api) may also help fill
 or measure gaps. Before building a crawler, the MVP should measure their German
 IT coverage. Direct ATS adapters are only needed where that coverage falls
@@ -68,7 +64,7 @@ a public XML feed containing a company's open positions
 That is enough to prove one complete path:
 
 ```txt
-Personio feed -> normalize -> PostgreSQL -> search -> SSH
+Personio feed -> normalize -> SQLite -> search -> SSH
 ```
 
 It should be able to:
@@ -85,7 +81,7 @@ It should be able to:
 For example:
 
 ```sh
-ssh jobsh search "backend go" --remote
+ssh jobsh search "backend python" --remote
 ssh jobsh show 01J...
 ssh jobsh search "security" --location berlin --json
 ```
@@ -104,33 +100,32 @@ None of that is needed to validate the core idea, so it can wait.
 
 ## Tech Stack
 
-I want the crawler and SSH application to be a single Go service. Go has a good
-standard library for HTTP, JSON, XML, and concurrency, and produces a small
-binary that is easy to deploy.
+I want the crawler and SSH application to be a single Python service. Python's
+standard library covers HTTP, JSON, XML, command-line parsing, and concurrency,
+which keeps the first version small and easy to deploy.
 
-PostgreSQL will hold companies, sources, postings, and crawl state. Its built-in
-full-text search should be enough for the first version. Raw source responses
-can stay on disk during development. Object storage can be added if retaining
-them at scale becomes useful.
+SQLite will hold companies, sources, postings, and crawl state. Its FTS5
+extension should be enough for the first version. Raw source responses can stay
+on disk during development. Object storage can be added if retaining them at
+scale becomes useful.
 
 The initial shape should stay small:
 
 ```txt
 ./
-├── cmd/jobsh/       -> Application entry point
-├── internal/
-│   ├── personio/    -> Personio client and normalization
-│   ├── jobs/        -> Job model and persistence
-│   └── ssh/         -> SSH commands and rendering
-├── migrations/      -> PostgreSQL schema
+├── pyproject.toml
+├── jobsh/
+│   ├── __main__.py  -> Application entry point
+│   ├── personio.py  -> Personio client and normalization
+│   ├── jobs.py      -> Job model and persistence
+│   └── ssh.py       -> SSH commands and rendering
+├── migrations/      -> SQLite schema
 ├── testdata/        -> Recorded source responses
 └── docs/            -> Cumulative journal
 ```
 
-A richer terminal UI may eventually use
-[Bubble Tea](https://github.com/charmbracelet/bubbletea), with
-[Wish](https://github.com/charmbracelet/wish) handling SSH sessions. Neither is
-needed until plain SSH commands work end to end.
+[AsyncSSH](https://asyncssh.readthedocs.io/) can handle SSH sessions. A richer
+terminal UI can wait until plain SSH commands work end to end.
 
 Pinloop will remain a useful reference for agent-oriented workflows. jobsh
 starts with a narrower purpose: a transparent, SSH-native index of German IT
