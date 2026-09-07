@@ -6,7 +6,9 @@ authors = [
     { name = "julilili42", email = "Julian-jurcevic-2000@web.de" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+]
 
 [project.scripts]
 jobsh = "jobsh.__main__:main"
