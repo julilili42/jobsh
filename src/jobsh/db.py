@@ -10,4 +10,12 @@ def connect(path: str | Path) -> sqlite3.Connection:
     database.execute("PRAGMA foreign_keys = ON")
     database.execute("PRAGMA journal_mode = WAL")
     database.executescript(MIGRATION.read_text())
+    with database:
+        database.execute("BEGIN IMMEDIATE")
+        columns = {row["name"] for row in database.execute("PRAGMA table_info(jobs)")}
+        if "missing_imports" not in columns:
+            database.execute(
+                "ALTER TABLE jobs ADD COLUMN missing_imports INTEGER NOT NULL "
+                "DEFAULT 0 CHECK (missing_imports >= 0)"
+            )
     return database

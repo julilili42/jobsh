@@ -59,7 +59,9 @@ def _save_job(
             published_at = :published_at,
             last_seen_at = :seen_at,
             content_hash = :content_hash,
-            raw_record = :raw_record
+            raw_record = :raw_record,
+            missing_imports = 0,
+            closed_at = NULL
         """,
         values,
     )
@@ -121,8 +123,18 @@ def _save_successful_sync(
 ) -> None:
     finished_at = datetime.now(timezone.utc).isoformat()
     with database:
+        database.execute(
+            "UPDATE jobs SET missing_imports = missing_imports + 1 "
+            "WHERE source_id = ? AND closed_at IS NULL",
+            (source_id,),
+        )
         created, updated, unchanged = save_jobs(
             database, source_id, records, finished_at
+        )
+        database.execute(
+            "UPDATE jobs SET closed_at = ? "
+            "WHERE source_id = ? AND missing_imports >= 2 AND closed_at IS NULL",
+            (finished_at, source_id),
         )
         database.execute(
             "UPDATE sources SET last_success_at = ? WHERE id = ?",
@@ -154,10 +166,10 @@ def _sync_source(
     started = time.monotonic()
     try:
         records = fetch_records(source["url"], timeout)
-    except (OSError, ValueError) as error:
+        _save_successful_sync(database, source["id"], records, started_at, started)
+    except (OSError, ValueError, sqlite3.Error) as error:
         _record_failed_sync(database, source["id"], started_at, started, error)
         return False
-    _save_successful_sync(database, source["id"], records, started_at, started)
     return True
 
 

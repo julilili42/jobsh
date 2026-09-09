@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     closed_at TEXT,
+    missing_imports INTEGER NOT NULL DEFAULT 0 CHECK (missing_imports >= 0),
     content_hash TEXT NOT NULL,
     raw_record TEXT NOT NULL,
     UNIQUE (source_id, external_id)

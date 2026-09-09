@@ -1,5 +1,3 @@
-"""Discover and verify Personio feed URLs using Common Crawl."""
-
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone

@@ -1,6 +1,7 @@
 import argparse
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 from .db import connect
@@ -12,7 +13,7 @@ def _run_discovery(
     database_path: Path, limit: int, workers: int, timeout: float
 ) -> None:
     feeds = discover(limit, workers, timeout)
-    with connect(database_path) as database:
+    with closing(connect(database_path)) as database, database:
         for account, feed_url, observed_at in feeds:
             register_feed(
                 database,
@@ -25,7 +26,7 @@ def _run_discovery(
 
 
 def _run_sync(database_path: Path, timeout: float) -> None:
-    with connect(database_path) as database:
+    with closing(connect(database_path)) as database, database:
         succeeded, failed = sync(database, timeout)
     print(f"synced {succeeded} sources; {failed} failed", file=sys.stderr)
     if failed:
