@@ -8,7 +8,6 @@ COLLECTIONS_URL = "https://index.commoncrawl.org/collinfo.json"
 
 
 def latest_snapshot(timeout: float) -> str:
-    """Return the API URL of the newest Common Crawl snapshot."""
     collections = json.loads(fetch(COLLECTIONS_URL, timeout))
     collection = max(collections, key=lambda item: item["to"])
     return collection["cdx-api"]

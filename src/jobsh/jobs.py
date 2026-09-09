@@ -1,0 +1,169 @@
+import sqlite3
+import time
+from datetime import datetime, timezone
+
+from .personio_feed import fetch_records
+
+
+def register_feed(
+    database: sqlite3.Connection,
+    account: str,
+    url: str,
+    discovery: str,
+    discovered_at: str | None = None,
+) -> None:
+    """Register or update a Personio feed."""
+    database.execute(
+        "INSERT INTO companies (name) VALUES (?) ON CONFLICT (name) DO NOTHING",
+        (account,),
+    )
+    database.execute(
+        """
+        INSERT INTO sources
+            (company_id, provider, provider_account, url, discovery, discovered_at)
+        VALUES ((SELECT id FROM companies WHERE name = ?), 'personio', ?, ?, ?, ?)
+        ON CONFLICT (provider, provider_account) DO UPDATE SET
+            url = excluded.url,
+            discovery = excluded.discovery,
+            discovered_at = COALESCE(excluded.discovered_at, sources.discovered_at)
+        """,
+        (account, account, url, discovery, discovered_at),
+    )
+
+
+def _save_job(
+    database: sqlite3.Connection, values: dict[str, str | int | None]
+) -> None:
+    database.execute(
+        """
+        INSERT INTO jobs (
+            source_id, external_id, title, description, locations,
+            location_text, work_mode, employment_type, original_url,
+            german_eligibility_evidence, published_at, first_seen_at,
+            last_seen_at, content_hash, raw_record
+        ) VALUES (
+            :source_id, :external_id, :title, :description, :locations,
+            :location_text, :work_mode, :employment_type, :original_url,
+            :german_eligibility_evidence, :published_at, :seen_at,
+            :seen_at, :content_hash, :raw_record
+        )
+        ON CONFLICT (source_id, external_id) DO UPDATE SET
+            title = :title,
+            description = :description,
+            locations = :locations,
+            location_text = :location_text,
+            work_mode = :work_mode,
+            employment_type = :employment_type,
+            original_url = :original_url,
+            german_eligibility_evidence = :german_eligibility_evidence,
+            published_at = :published_at,
+            last_seen_at = :seen_at,
+            content_hash = :content_hash,
+            raw_record = :raw_record
+        """,
+        values,
+    )
+
+
+def save_jobs(
+    database: sqlite3.Connection,
+    source_id: int,
+    records: list[dict[str, str | None]],
+    seen_at: str,
+) -> tuple[int, int, int]:
+    created = updated = unchanged = 0
+    for record in records:
+        existing = database.execute(
+            "SELECT content_hash FROM jobs WHERE source_id = ? AND external_id = ?",
+            (source_id, record["external_id"]),
+        ).fetchone()
+        _save_job(database, record | {"source_id": source_id, "seen_at": seen_at})
+        if existing is None:
+            created += 1
+        elif existing["content_hash"] == record["content_hash"]:
+            unchanged += 1
+        else:
+            updated += 1
+    return created, updated, unchanged
+
+
+def _record_failed_sync(
+    database: sqlite3.Connection,
+    source_id: int,
+    started_at: str,
+    started: float,
+    error: Exception,
+) -> None:
+    finished_at = datetime.now(timezone.utc).isoformat()
+    with database:
+        database.execute(
+            """
+            INSERT INTO sync_runs
+                (source_id, started_at, finished_at, status, duration_ms, error)
+            VALUES (?, ?, ?, 'failed', ?, ?)
+            """,
+            (
+                source_id,
+                started_at,
+                finished_at,
+                round((time.monotonic() - started) * 1000),
+                str(error),
+            ),
+        )
+
+
+def _save_successful_sync(
+    database: sqlite3.Connection,
+    source_id: int,
+    records: list[dict[str, str | None]],
+    started_at: str,
+    started: float,
+) -> None:
+    finished_at = datetime.now(timezone.utc).isoformat()
+    with database:
+        created, updated, unchanged = save_jobs(
+            database, source_id, records, finished_at
+        )
+        database.execute(
+            "UPDATE sources SET last_success_at = ? WHERE id = ?",
+            (finished_at, source_id),
+        )
+        database.execute(
+            """
+            INSERT INTO sync_runs (
+                source_id, started_at, finished_at, status, created_count,
+                updated_count, unchanged_count, duration_ms
+            ) VALUES (?, ?, ?, 'succeeded', ?, ?, ?, ?)
+            """,
+            (
+                source_id,
+                started_at,
+                finished_at,
+                created,
+                updated,
+                unchanged,
+                round((time.monotonic() - started) * 1000),
+            ),
+        )
+
+
+def _sync_source(
+    database: sqlite3.Connection, source: sqlite3.Row, timeout: float
+) -> bool:
+    started_at = datetime.now(timezone.utc).isoformat()
+    started = time.monotonic()
+    try:
+        records = fetch_records(source["url"], timeout)
+    except (OSError, ValueError) as error:
+        _record_failed_sync(database, source["id"], started_at, started, error)
+        return False
+    _save_successful_sync(database, source["id"], records, started_at, started)
+    return True
+
+
+def sync(database: sqlite3.Connection, timeout: float) -> tuple[int, int]:
+    sources = database.execute(
+        "SELECT id, url FROM sources WHERE provider = 'personio' ORDER BY id"
+    ).fetchall()
+    succeeded = sum(_sync_source(database, source, timeout) for source in sources)
+    return succeeded, len(sources) - succeeded

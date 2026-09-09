@@ -6,8 +6,10 @@ discovery candidates. Deduplicate the hosts and verify each current feed at
 `https://<account>.jobs.personio.de/xml?language=de`.
 
 ```sh
-uv run jobsh discover-personio > personio-sources.jsonl
+uv run jobsh discovery
 ```
+
+Register verified feed endpoints directly in SQLite.
 
 Keep a manually reviewed reference sample of 20 Personio career pages. Use it to
 measure discovery gaps and compare feeds with their current career pages.

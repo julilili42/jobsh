@@ -16,9 +16,8 @@ classification, original URL, and source identity. Keep `published_at`,
 `first_seen_at`, `last_seen_at`, and `closed_at` separate. Preserve the latest
 raw record and a hash of the normalized content.
 
-Add operator-only commands to register one feed, load the verified discovery
-list, and run `jobsh sync`. Fetch each feed, validate its records, normalize
-them, and upsert jobs. Enforce uniqueness on `(source_id, external_id)`.
+Run `jobsh sync` to fetch every registered feed, validate and normalize its
+records, and upsert its jobs. Enforce uniqueness on `(source_id, external_id)`.
 
 Missing fields stay unknown. Keep the original location text. Preserve multiple
 locations and use `remote`, `hybrid`, `onsite`, or `unknown` for work mode.
