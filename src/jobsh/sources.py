@@ -1,13 +1,11 @@
 import sqlite3
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
-from functools import partial
+from itertools import islice
 
 from .jobs import save_jobs
-from .personio_feed import fetch_records
-
-ADAPTERS = {"personio": fetch_records}
+from .adapters import ADAPTERS
 
 
 def register_source(
@@ -58,7 +56,7 @@ def _fetch_source(source: sqlite3.Row, timeout: float):
     if adapter is None:
         return source_id, started_at, started, [], ValueError(f"unknown provider: {provider}")
     try:
-        return source_id, started_at, started, adapter(url, timeout), None
+        return source_id, started_at, started, adapter.fetch_records(url, timeout), None
     except (OSError, ValueError) as error:
         return source_id, started_at, started, [], error
 
@@ -104,8 +102,16 @@ def sync(database: sqlite3.Connection, timeout: float, workers: int = 32) -> tup
     if timeout <= 0 or workers < 1:
         raise ValueError("timeout and workers must be > 0")
     sources = database.execute("SELECT id, provider, url FROM sources ORDER BY id").fetchall()
-    fetch_source = partial(_fetch_source, timeout=timeout)
+    remaining = iter(sources)
+    succeeded = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        fetched = pool.map(fetch_source, sources)
-        succeeded = sum(_save_source(database, *result) for result in fetched)
+        pending = {pool.submit(_fetch_source, source, timeout)
+                   for source in islice(remaining, workers)}
+        while pending:
+            completed, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in completed:
+                succeeded += _save_source(database, *future.result())
+                source = next(remaining, None)
+                if source is not None:
+                    pending.add(pool.submit(_fetch_source, source, timeout))
     return succeeded, len(sources) - succeeded

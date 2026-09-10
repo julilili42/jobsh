@@ -1,7 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
-from threading import Barrier
+from types import SimpleNamespace
+from threading import Barrier, Event
 from unittest.mock import Mock, patch
 
 from jobsh.db import connect
@@ -14,6 +15,28 @@ FEED_URL = "https://example.jobs.personio.de/xml?language=de"
 
 
 class ManualImportTest(unittest.TestCase):
+    def test_sync_saves_completed_source_before_slow_source(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        saved = Event()
+
+        def adapter(url, timeout):
+            if "slow" in url:
+                if not saved.wait(3):
+                    raise ValueError("fast source was not saved")
+            return []
+
+        database.create_function("notify_saved", 0, lambda: saved.set() or 0)
+        database.execute(
+            "CREATE TEMP TRIGGER notify_sync AFTER INSERT ON sync_runs "
+            "WHEN new.source_id = 2 BEGIN SELECT notify_saved(); END"
+        )
+        with database:
+            for account in ("slow", "fast"):
+                register_source(database, "example", account, f"https://{account}.example", "manual")
+        with patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}):
+            self.assertEqual(sync(database, 3, workers=2), (2, 0))
+
     def test_sync_fetches_sources_concurrently(self) -> None:
         database = connect(":memory:")
         self.addCleanup(database.close)
@@ -23,7 +46,7 @@ class ManualImportTest(unittest.TestCase):
             barrier.wait(timeout=1)
             return []
 
-        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": adapter}, clear=True):
+        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
             for account in ("one", "two"):
                 register_source(database, "example", account, f"https://{account}.example", "manual")
             self.assertEqual(sync(database, 3, workers=2), (2, 0))
@@ -32,7 +55,7 @@ class ManualImportTest(unittest.TestCase):
         database = connect(":memory:")
         self.addCleanup(database.close)
         adapter = Mock(return_value=[])
-        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": adapter}, clear=True):
+        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
             register_source(database, "example", "account", "https://example.test/jobs", "manual")
             self.assertEqual(sync(database, 3), (1, 0))
         adapter.assert_called_once_with("https://example.test/jobs", 3)

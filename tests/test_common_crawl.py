@@ -1,11 +1,47 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+from jobsh.adapters import Adapter
 from urllib.parse import parse_qs, urlsplit
 
 from jobsh.discovery import COLLECTIONS_URL, _read_json, discover, records
 
 
 class CommonCrawlTest(unittest.TestCase):
+    @patch("jobsh.discovery.records")
+    def test_adapter_supports_accounts_in_url_paths(self, records_mock):
+        records_mock.return_value = [
+            {"url": "https://boards.example/known/1"},
+            {"url": "https://boards.example/new/2"},
+            {"url": "https://boards.example/new/3"},
+        ]
+        fetch = Mock(return_value=[])
+        def source(url):
+            account = urlsplit(url).path.split("/")[1]
+            return account, f"https://api.example/{account}/jobs"
+        adapter = Adapter("boards.example", source, fetch)
+        with patch.dict("jobsh.discovery.ADAPTERS", {"example": adapter}):
+            result = discover("example", 10, 2, 3, {"known"})
+        self.assertEqual([row[:2] for row in result], [("new", "https://api.example/new/jobs")])
+        fetch.assert_called_once_with("https://api.example/new/jobs", 3)
+        records_mock.assert_called_once_with("boards.example", 3, None)
+
+    @patch("jobsh.discovery._read_json")
+    def test_resume_inside_page_and_restart_for_new_collection(self, read):
+        state = {}
+        rows = [{"url": "https://one.example"}, {"url": "https://two.example"}]
+        read.side_effect = lambda url, timeout, **kwargs: (
+            [{"cdx-api": "index", "to": "2026"}] if url == COLLECTIONS_URL
+            else rows if kwargs.get("lines") else {"pages": 1}
+        )
+        stream = records("example", 1, state)
+        self.assertEqual(next(stream), rows[0])
+        stream.close()
+        self.assertEqual(list(records("example", 1, state)), rows[1:])
+        self.assertEqual(list(records("example", 1, state)), [])
+        state["endpoint"] = "old-index"
+        self.assertEqual(list(records("example", 1, state)), rows)
+
     @patch("jobsh.discovery.fetch")
     def test_latest_snapshot_uses_newest_collection(self, fetch) -> None:
         fetch.return_value = b"""[
@@ -68,11 +104,11 @@ class CommonCrawlTest(unittest.TestCase):
             b'{"url":"https://beta.jobs.personio.de/job/1"}\n'
             b'{"url":"https://alpha.jobs.personio.de/job/1"}\n',
         ]
-        self.assertEqual(discover("jobs.personio.de", limit=2, workers=1, timeout=1), [])
+        self.assertEqual(discover("personio", limit=2, workers=1, timeout=1), [])
         self.assertEqual(fetch.call_count, 4)  # Metadata + two pages, not all 100 pages.
         sleep.assert_called_once_with(1)
-        self.assertEqual([call.args[0] for call in verify.call_args_list],
-                         ["beta.jobs.personio.de", "zeta.jobs.personio.de"])
+        self.assertEqual([call.args[0][0] for call in verify.call_args_list],
+                         ["beta", "zeta"])
 
     @patch("jobsh.discovery.time.sleep")
     @patch("jobsh.discovery.fetch")

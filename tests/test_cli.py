@@ -37,7 +37,7 @@ class CliTest(unittest.TestCase):
                     "SELECT status FROM sync_runs ORDER BY id"
                 ).fetchall(), [("failed",), ("succeeded",)])
 
-    @patch("jobsh.discovery.fetch")
+    @patch("jobsh.personio_feed.fetch")
     @patch("jobsh.discovery.records")
     def test_discovery_registers_only_valid_feeds_and_respects_limit(self, records, fetch):
         accounts = ("alpha", "alpha", "broken", "empty", "zeta")

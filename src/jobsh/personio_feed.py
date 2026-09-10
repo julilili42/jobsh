@@ -78,3 +78,11 @@ def normalize_feed(data: bytes, feed_url: str) -> list[dict[str, str | None]]:
 
 def fetch_records(feed_url: str, timeout: float) -> list[dict[str, str | None]]:
     return normalize_feed(fetch(feed_url, timeout), feed_url)
+
+
+def source(url: str) -> tuple[str, str] | None:
+    host = urlsplit(url).hostname or ""
+    account, _, domain = host.partition(".")
+    if account and domain == "jobs.personio.de":
+        return account, f"https://{host}/xml?language=de"
+    return None

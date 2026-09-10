@@ -3,9 +3,8 @@ import json
 import sqlite3
 import sys
 from contextlib import closing
-from functools import partial
 from pathlib import Path
-from urllib.parse import urlsplit
+from .adapters import ADAPTERS
 
 from .db import connect
 from .discovery import discover
@@ -13,16 +12,29 @@ from .search import get_job, search
 from .sources import register_source, sync
 
 
-def _discovery(provider: str, domain: str, args: argparse.Namespace) -> None:
+def _discovery(args: argparse.Namespace) -> None:
+    provider = args.provider
+    domain = ADAPTERS[provider].domain
     with closing(connect(args.db)) as database:
-        known_hosts = {
-            urlsplit(row[0]).hostname or ""
-            for row in database.execute("SELECT url FROM sources WHERE provider = ?", (provider,))
+        known_accounts = {
+            row[0]
+            for row in database.execute("SELECT provider_account FROM sources WHERE provider = ?", (provider,))
         }
-        feeds = discover(domain, args.limit, args.workers, args.timeout, known_hosts)
+        database.execute(
+            "CREATE TABLE IF NOT EXISTS discovery_state (domain TEXT PRIMARY KEY, state TEXT NOT NULL)"
+        )
+        saved = database.execute(
+            "SELECT state FROM discovery_state WHERE domain = ?", (domain,)
+        ).fetchone()
+        state = json.loads(saved[0]) if saved else {}
+        feeds = discover(provider, args.limit, args.workers, args.timeout, known_accounts, state)
         with database:
             for account, url, observed_at in feeds:
                 register_source(database, provider, account, url, "common-crawl", observed_at)
+            database.execute(
+                "INSERT OR REPLACE INTO discovery_state VALUES (?, ?)",
+                (domain, json.dumps(state)),
+            )
     print(f"registered {len(feeds)} feeds", file=sys.stderr)
 
 
@@ -63,7 +75,8 @@ def _build_parser() -> argparse.ArgumentParser:
     command = commands.add_parser(
         "discovery", help="find and register public Personio feeds"
     )
-    command.set_defaults(run=partial(_discovery, "personio", "jobs.personio.de"))
+    command.set_defaults(run=_discovery)
+    command.add_argument("--provider", choices=ADAPTERS, default="personio")
     command.add_argument("--limit", type=int, default=0, help="maximum hosts to verify")
     command.add_argument("--workers", type=int, default=32)
     command.add_argument("--timeout", type=float, default=15)

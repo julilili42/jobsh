@@ -8,7 +8,7 @@ from functools import partial
 from urllib.parse import urlencode, urlsplit
 
 from .http import fetch
-from .personio_feed import validated_positions
+from .adapters import ADAPTERS, Adapter
 
 COLLECTIONS_URL = "https://index.commoncrawl.org/collinfo.json"
 
@@ -24,16 +24,23 @@ def _read_json(url: str, timeout: float, *, lines: bool = False):
             time.sleep(1)
 
 
-def records(domain: str, timeout: float):
+def records(domain: str, timeout: float, state: dict | None = None):
     collections = _read_json(COLLECTIONS_URL, timeout)
     endpoint = max(collections, key=lambda item: item["to"])["cdx-api"]
+    state = state if state is not None else {}
+    if state.get("endpoint") != endpoint:
+        state.update(endpoint=endpoint, page=0, offset=0)
     query = {"url": domain, "matchType": "domain", "filter": "status:200",
              "output": "json", "pageSize": 1}
     pages = _read_json(f"{endpoint}?{urlencode(query | {'showNumPages': 'true'})}", timeout)["pages"]
-    for page in range(pages):
-        yield from _read_json(
+    for page in range(state["page"], pages):
+        rows = _read_json(
             f"{endpoint}?{urlencode(query | {'page': page, 'fl': 'url'})}", timeout, lines=True
         )
+        for offset in range(state["offset"], len(rows)):
+            state.update(page=page, offset=offset + 1)
+            yield rows[offset]
+        state.update(page=page + 1, offset=0)
         if page + 1 < pages:
             time.sleep(1)
 
@@ -58,27 +65,35 @@ def candidate_hosts(
     return sorted(hosts)
 
 
-def verify(host: str, domain: str, timeout: float) -> tuple[str, str, str] | None:
-    feed_url = f"https://{host}/xml?language=de"
+def verify(source: tuple[str, str], adapter: Adapter, timeout: float):
+    account, url = source
     try:
-        validated_positions(fetch(feed_url, timeout))
+        adapter.fetch_records(url, timeout)
     except (OSError, ValueError):
         return None
-    return host.removesuffix(f".{domain}"), feed_url, datetime.now(timezone.utc).isoformat()
+    return account, url, datetime.now(timezone.utc).isoformat()
 
 
 def discover(
-    domain: str, limit: int, workers: int, timeout: float, known_hosts: set[str] | None = None,
+    provider: str, limit: int, workers: int, timeout: float, known_accounts: set[str] | None = None,
+    state: dict | None = None,
 ) -> list[tuple[str, str, str]]:
     if limit < 0 or workers < 1 or timeout <= 0:
         raise ValueError("limit must be >= 0; workers and timeout must be > 0")
-    print("collecting candidate hosts from Common Crawl", file=sys.stderr)
-    crawl_records = records(domain, timeout)
-    hosts = candidate_hosts(crawl_records, domain, limit, known_hosts)
-    print(f"verifying {len(hosts)} candidate hosts", file=sys.stderr)
+    adapter = ADAPTERS[provider]
+    known_accounts = known_accounts or set()
+    print("collecting candidates from Common Crawl", file=sys.stderr)
+    candidates = {}
+    for record in records(adapter.domain, timeout, state):
+        source = adapter.source(record.get("url", ""))
+        if source is not None and source[0] not in known_accounts:
+            candidates[source[0]] = source
+            if limit and len(candidates) >= limit:
+                break
+    print(f"verifying {len(candidates)} candidates", file=sys.stderr)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        verify_host = partial(verify, domain=domain, timeout=timeout)
-        verified = pool.map(verify_host, hosts)
+        verify_source = partial(verify, adapter=adapter, timeout=timeout)
+        verified = pool.map(verify_source, sorted(candidates.values()))
         results = sorted(result for result in verified if result)
     print(f"verified {len(results)} feeds", file=sys.stderr)
     return results
