@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from jobsh.cli import _build_parser, main
 from jobsh.db import connect
-from jobsh.jobs import register_feed
+from jobsh.sources import register_source
 
 FEED = (Path(__file__).parents[1] / "testdata/personio.xml").read_bytes()
 
@@ -21,7 +21,7 @@ class CliTest(unittest.TestCase):
             database = connect(path)
             with database:
                 for account in ("broken", "working"):
-                    register_feed(database, account, f"https://{account}.jobs.personio.de/xml", "manual")
+                    register_source(database, "personio", account, f"https://{account}.jobs.personio.de/xml", "manual")
             database.close()
             stderr = io.StringIO()
             with patch("sys.argv", ["jobsh", "--db", str(path), "sync"]), redirect_stderr(stderr):
@@ -71,7 +71,7 @@ class CliTest(unittest.TestCase):
         sync = _build_parser().parse_args(["sync", "--timeout", "4"])
         self.assertEqual(sync.command, "sync")
         self.assertEqual(sync.db, Path("jobsh.db"))
-        self.assertEqual(sync.timeout, 4)
+        self.assertEqual((sync.workers, sync.timeout), (32, 4))
 
 
 if __name__ == "__main__":

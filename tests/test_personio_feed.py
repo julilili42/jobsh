@@ -75,6 +75,10 @@ class PersonioTest(unittest.TestCase):
             candidate_hosts(records, "JOBS.EXAMPLE"),
             ["alpha.jobs.example", "beta.jobs.example"],
         )
+        self.assertEqual(
+            candidate_hosts(records, "jobs.example", known_hosts={"alpha.jobs.example"}),
+            ["beta.jobs.example"],
+        )
 
     def test_feed_requires_personio_xml_with_complete_positions(self) -> None:
         with self.assertRaisesRegex(ValueError, "invalid Personio XML"):

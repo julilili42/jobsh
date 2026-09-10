@@ -1,24 +1,49 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from threading import Barrier
+from unittest.mock import Mock, patch
 
 from jobsh.db import connect
-from jobsh.jobs import register_feed, save_jobs, sync
+from jobsh.jobs import save_jobs
 from jobsh.personio_feed import normalize_feed
+from jobsh.sources import register_source, sync
 
 FIXTURE = Path(__file__).parents[1] / "testdata" / "personio.xml"
 FEED_URL = "https://example.jobs.personio.de/xml?language=de"
 
 
 class ManualImportTest(unittest.TestCase):
+    def test_sync_fetches_sources_concurrently(self) -> None:
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        barrier = Barrier(2)
+
+        def adapter(url, timeout):
+            barrier.wait(timeout=1)
+            return []
+
+        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": adapter}, clear=True):
+            for account in ("one", "two"):
+                register_source(database, "example", account, f"https://{account}.example", "manual")
+            self.assertEqual(sync(database, 3, workers=2), (2, 0))
+
+    def test_sync_uses_source_provider(self) -> None:
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Mock(return_value=[])
+        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": adapter}, clear=True):
+            register_source(database, "example", "account", "https://example.test/jobs", "manual")
+            self.assertEqual(sync(database, 3), (1, 0))
+        adapter.assert_called_once_with("https://example.test/jobs", 3)
+
     def test_register_updates_feed_without_duplicating_company(self) -> None:
         database = connect(":memory:")
         self.addCleanup(database.close)
-        register_feed(database, "example", FEED_URL, "common-crawl", "2026-09-01")
+        register_source(database, "personio", "example", FEED_URL, "common-crawl", "2026-09-01")
         first = dict(database.execute("SELECT * FROM sources").fetchone())
         new_url = FEED_URL.replace("language=de", "language=en")
-        register_feed(database, "example", new_url, "manual")
+        register_source(database, "personio", "example", new_url, "manual")
         final = dict(database.execute("SELECT * FROM sources").fetchone())
         self.assertEqual(final, first | {"url": new_url, "discovery": "manual"})
         self.assertEqual(database.execute("SELECT count(*) FROM companies").fetchone()[0], 1)
@@ -29,8 +54,8 @@ class ManualImportTest(unittest.TestCase):
         database = connect(":memory:")
         self.addCleanup(database.close)
         with database:
-            register_feed(database, "broken", FEED_URL.replace("example", "broken"), "manual")
-            register_feed(database, "example", FEED_URL, "manual")
+            register_source(database, "personio", "broken", FEED_URL.replace("example", "broken"), "manual")
+            register_source(database, "personio", "example", FEED_URL, "manual")
         fetch.side_effect = [b"<broken", FIXTURE.read_bytes()]
         self.assertEqual(sync(database, 3), (1, 1))
         runs = database.execute("SELECT status, error FROM sync_runs ORDER BY id").fetchall()
@@ -42,7 +67,7 @@ class ManualImportTest(unittest.TestCase):
     def test_upsert_preserves_identity_and_first_seen(self) -> None:
         database = connect(":memory:")
         self.addCleanup(database.close)
-        register_feed(database, "example", FEED_URL, "common-crawl")
+        register_source(database, "personio", "example", FEED_URL, "common-crawl")
         source_id = database.execute("SELECT id FROM sources").fetchone()["id"]
         records = normalize_feed(FIXTURE.read_bytes(), FEED_URL)
         self.assertEqual(save_jobs(database, source_id, records, "2026-09-01"), (1, 0, 0))
@@ -76,7 +101,7 @@ class ManualImportTest(unittest.TestCase):
             database = connect(Path(directory) / "jobsh.db")
             self.addCleanup(database.close)
             with database:
-                register_feed(database, "example", FEED_URL, "common-crawl")
+                register_source(database, "personio", "example", FEED_URL, "common-crawl")
 
             self.assertEqual(sync(database, 3), (1, 0))
             first = database.execute("SELECT id, title FROM jobs").fetchone()

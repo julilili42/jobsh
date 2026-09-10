@@ -3,12 +3,57 @@ import json
 import sqlite3
 import sys
 from contextlib import closing
+from functools import partial
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .db import connect
 from .discovery import discover
-from .jobs import register_feed, sync
 from .search import get_job, search
+from .sources import register_source, sync
+
+
+def _discovery(provider: str, domain: str, args: argparse.Namespace) -> None:
+    with closing(connect(args.db)) as database:
+        known_hosts = {
+            urlsplit(row[0]).hostname or ""
+            for row in database.execute("SELECT url FROM sources WHERE provider = ?", (provider,))
+        }
+        feeds = discover(domain, args.limit, args.workers, args.timeout, known_hosts)
+        with database:
+            for account, url, observed_at in feeds:
+                register_source(database, provider, account, url, "common-crawl", observed_at)
+    print(f"registered {len(feeds)} feeds", file=sys.stderr)
+
+
+def _sync(args: argparse.Namespace) -> None:
+    with closing(connect(args.db)) as database, database:
+        succeeded, failed = sync(database, args.timeout, args.workers)
+    print(f"synced {succeeded} sources; {failed} failed", file=sys.stderr)
+    if failed:
+        raise OSError(f"{failed} source imports failed")
+
+
+def _search(args: argparse.Namespace) -> None:
+    with closing(connect(args.db)) as database:
+        jobs = search(database, args.query, title=args.title, location=args.location,
+                      work_mode=args.work_mode, limit=args.limit, offset=args.offset)
+    if args.json:
+        print(json.dumps(jobs, ensure_ascii=False))
+        return
+    for job in jobs:
+        print(f"{job['id']}\t{job['title']}\t{job['location_text'] or 'unknown'}\t{job['work_mode']}")
+        print(f"  {job['original_url']} | {job['provider_account']} | last seen: {job['last_seen_at']}")
+
+
+def _show(args: argparse.Namespace) -> None:
+    with closing(connect(args.db)) as database:
+        job = get_job(database, args.id)
+    if args.json:
+        print(json.dumps(job, ensure_ascii=False))
+        return
+    for key, value in job.items():
+        print(f"{key}: {value if value is not None else 'unknown'}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -18,14 +63,18 @@ def _build_parser() -> argparse.ArgumentParser:
     command = commands.add_parser(
         "discovery", help="find and register public Personio feeds"
     )
+    command.set_defaults(run=partial(_discovery, "personio", "jobs.personio.de"))
     command.add_argument("--limit", type=int, default=0, help="maximum hosts to verify")
-    command.add_argument("--workers", type=int, default=8)
+    command.add_argument("--workers", type=int, default=32)
     command.add_argument("--timeout", type=float, default=15)
 
     command = commands.add_parser("sync", help="import all registered feeds")
+    command.set_defaults(run=_sync)
+    command.add_argument("--workers", type=int, default=32)
     command.add_argument("--timeout", type=float, default=15)
 
     command = commands.add_parser("search", help="search open, confirmed IT jobs")
+    command.set_defaults(run=_search)
     command.add_argument("query", nargs="?", default="")
     command.add_argument("--title", default="")
     command.add_argument("--location", default="")
@@ -39,6 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
     command = commands.add_parser(
         "show", help="show a job, including unclassified or closed jobs"
     )
+    command.set_defaults(run=_show)
     command.add_argument("id", type=int)
     command.add_argument("--json", action="store_true")
     return parser
@@ -49,32 +99,6 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        if args.command == "discovery":
-            feeds = discover(args.limit, args.workers, args.timeout)
-            with closing(connect(args.db)) as database, database:
-                for account, feed_url, observed_at in feeds:
-                    register_feed(database, account, feed_url, "common-crawl", observed_at)
-            print(f"registered {len(feeds)} feeds", file=sys.stderr)
-        elif args.command == "sync":
-            with closing(connect(args.db)) as database, database:
-                succeeded, failed = sync(database, args.timeout)
-            print(f"synced {succeeded} sources; {failed} failed", file=sys.stderr)
-            if failed:
-                raise OSError(f"{failed} source imports failed")
-        elif args.command in ("search", "show"):
-            with closing(connect(args.db)) as database:
-                result = get_job(database, args.id) if args.command == "show" else search(
-                    database, args.query, title=args.title, location=args.location,
-                    work_mode=args.work_mode, limit=args.limit, offset=args.offset,
-                )
-            if args.json:
-                print(json.dumps(result, ensure_ascii=False))
-            elif args.command == "show":
-                for key, value in result.items():
-                    print(f"{key}: {value if value is not None else 'unknown'}")
-            else:
-                for job in result:
-                    print(f"{job['id']}\t{job['title']}\t{job['location_text'] or 'unknown'}\t{job['work_mode']}")
-                    print(f"  {job['original_url']} | {job['provider_account']} | last seen: {job['last_seen_at']}")
-    except (OSError, ValueError, KeyError, sqlite3.Error) as error:
+        args.run(args)
+    except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f"jobsh: {error}\n")

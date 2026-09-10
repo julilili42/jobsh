@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from .classification import classify
+from .jobs import classify
 
 MIGRATION = Path(__file__).parents[2] / "migrations" / "001_initial.sql"
 

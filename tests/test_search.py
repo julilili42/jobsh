@@ -8,19 +8,19 @@ from contextlib import closing, redirect_stdout, redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
-from jobsh.classification import classify
 from jobsh.cli import main
 from jobsh.db import MIGRATION, connect
-from jobsh.jobs import register_feed, save_jobs
+from jobsh.jobs import classify, save_jobs
 from jobsh.personio_feed import normalize_feed
 from jobsh.search import get_job, search
+from jobsh.sources import register_source
 
 SAMPLE = json.loads((Path(__file__).parents[1] / "testdata/classification.json").read_text())
 URL = "https://example.jobs.personio.de/xml"
 
 
 def seed(database):
-    register_feed(database, "example", URL, "manual")
+    register_source(database, "personio", "example", URL, "manual")
     source_id = database.execute("SELECT id FROM sources").fetchone()["id"]
     root = ET.Element("workzag-jobs")
     for index, item in enumerate(SAMPLE, 1):
@@ -119,7 +119,7 @@ class SearchTest(unittest.TestCase):
             with closing(sqlite3.connect(path)) as database, database:
                 schema = MIGRATION.read_text().replace("    source_category TEXT,\n", "").replace("    classification_rule TEXT,\n", "")
                 database.executescript(schema)
-                register_feed(database, "example", URL, "manual")
+                register_source(database, "personio", "example", URL, "manual")
                 database.execute(
                     "INSERT INTO jobs (source_id, external_id, title, locations, work_mode, "
                     "original_url, first_seen_at, last_seen_at, content_hash, raw_record) "

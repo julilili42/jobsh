@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jobsh.db import connect
-from jobsh.jobs import register_feed, sync
 from jobsh.http import fetch as http_fetch
+from jobsh.sources import register_source, sync
 import httpx
 
 FEED_URL = "https://example.jobs.personio.de/xml?language=de"
@@ -21,7 +21,7 @@ class SafeReimportsTest(unittest.TestCase):
         self.addCleanup(database.close)
         with database:
             for account in ("alpha", "beta"):
-                register_feed(database, account, f"https://{account}.jobs.personio.de/xml", "manual")
+                register_source(database, "personio", account, f"https://{account}.jobs.personio.de/xml", "manual")
         fetch.return_value = FEED
         self.assertEqual(sync(database, 3), (2, 0))
         initial = database.execute("SELECT id, external_id FROM jobs ORDER BY source_id").fetchall()
@@ -40,7 +40,7 @@ class SafeReimportsTest(unittest.TestCase):
         database = connect(":memory:")
         self.addCleanup(database.close)
         with database:
-            register_feed(database, "example", FEED_URL, "manual")
+            register_source(database, "personio", "example", FEED_URL, "manual")
         with patch("jobsh.personio_feed.fetch", return_value=FEED):
             self.assertEqual(sync(database, 3), (1, 0))
         before = dict(database.execute("SELECT * FROM jobs").fetchone())
@@ -66,7 +66,7 @@ class SafeReimportsTest(unittest.TestCase):
             path = Path(directory) / "old.db"
             database = connect(path)
             with database:
-                register_feed(database, "example", FEED_URL, "manual")
+                register_source(database, "personio", "example", FEED_URL, "manual")
             with patch("jobsh.personio_feed.fetch", return_value=FEED):
                 self.assertEqual(sync(database, 3), (1, 0))
             database.execute("ALTER TABLE jobs DROP COLUMN missing_imports")
@@ -85,7 +85,7 @@ class SafeReimportsTest(unittest.TestCase):
         database = connect(":memory:")
         self.addCleanup(database.close)
         with database:
-            register_feed(database, "example", FEED_URL, "manual")
+            register_source(database, "personio", "example", FEED_URL, "manual")
 
         def run(data):
             fetch.side_effect = data if isinstance(data, Exception) else None

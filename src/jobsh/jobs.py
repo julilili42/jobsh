@@ -1,10 +1,11 @@
+import re
 import sqlite3
-import time
-from datetime import datetime, timezone
 
-from .classification import classify
-from .personio_feed import fetch_records
-
+NON_IT = re.compile(r"\b(recruit\w*|personalreferent\w*|talent acquisition|sales|vertrieb\w*|marketing|buchhalt\w*|accountant|pflege\w*|nurse|koch|cook|business development)\b", re.I)
+IT_ROLE = re.compile(r"\b(softwareentwickler\w*|software developer|software engineer|programmierer\w*|fachinformatiker\w*|systemadministrator\w*|sysadmin|devops|sre|data engineer|data scientist|frontend\w*|backend\w*|full.?stack|it[ -](support|administrator|security|architect)|cybersecurity)\b", re.I)
+TECH = re.compile(r"(?<!\w)(python|java|javascript|typescript|golang|go|c\+\+|c#|\.net|sql|linux|kubernetes)(?!\w)", re.I)
+GENERIC_ROLE = re.compile(r"\b(developer|entwickler\w*|engineer|administrator)\b", re.I)
+IT_CATEGORY = re.compile(r"\b(it|software|information technology|informatik)\b", re.I)
 JOB_FIELDS = (
     "title", "description", "locations", "location_text", "work_mode", "employment_type",
     "original_url", "german_eligibility_evidence", "published_at", "content_hash", "raw_record",
@@ -19,30 +20,19 @@ UPSERT_JOB = f"""
 """
 
 
-def register_feed(
-    database: sqlite3.Connection,
-    account: str,
-    url: str,
-    discovery: str,
-    discovered_at: str | None = None,
-) -> None:
-    """Register or update a Personio feed."""
-    database.execute(
-        "INSERT INTO companies (name) VALUES (?) ON CONFLICT (name) DO NOTHING",
-        (account,),
-    )
-    database.execute(
-        """
-        INSERT INTO sources
-            (company_id, provider, provider_account, url, discovery, discovered_at)
-        VALUES ((SELECT id FROM companies WHERE name = ?), 'personio', ?, ?, ?, ?)
-        ON CONFLICT (provider, provider_account) DO UPDATE SET
-            url = excluded.url,
-            discovery = excluded.discovery,
-            discovered_at = COALESCE(excluded.discovered_at, sources.discovered_at)
-        """,
-        (account, account, url, discovery, discovered_at),
-    )
+def classify(title: str, description: str = "", category: str = "") -> tuple[str, str]:
+    if NON_IT.search(title):
+        return "non_it", "title:non_it_role"
+    if IT_ROLE.search(title):
+        return "it", "title:it_role"
+    if GENERIC_ROLE.search(title):
+        if TECH.search(title):
+            return "it", "title:technical_role"
+        if IT_CATEGORY.search(category):
+            return "it", "category:it_with_role"
+        if IT_ROLE.search(description) and TECH.search(description):
+            return "it", "description:it_role_and_technology"
+    return "uncertain", "unmatched"
 
 
 def save_jobs(
@@ -51,71 +41,36 @@ def save_jobs(
     records: list[dict[str, str | None]],
     seen_at: str,
 ) -> tuple[int, int, int]:
-    created = unchanged = 0
+    existing = {
+        row["external_id"]: row
+        for row in database.execute(
+            f"SELECT external_id, {', '.join(JOB_FIELDS)} FROM jobs WHERE source_id = ?",
+            (source_id,),
+        )
+    }
+    created = updated = 0
+    unchanged = []
     for record in records:
-        existing = database.execute(
-            "SELECT content_hash FROM jobs WHERE source_id = ? AND external_id = ?",
-            (source_id, record["external_id"]),
-        ).fetchone()
         classification, rule = classify(
             record["title"], record.get("description") or "", record.get("source_category") or ""
         )
-        database.execute(UPSERT_JOB, record | {
+        values = record | {
             "source_id": source_id, "seen_at": seen_at,
             "source_category": record.get("source_category"),
             "it_classification": classification, "classification_rule": rule,
-        })
-        if existing is None:
+        }
+        previous = existing.get(record["external_id"])
+        if previous is not None and all(previous[name] == values[name] for name in JOB_FIELDS):
+            unchanged.append((seen_at, source_id, record["external_id"]))
+            continue
+        database.execute(UPSERT_JOB, values)
+        if previous is None:
             created += 1
-        elif existing["content_hash"] == record["content_hash"]:
-            unchanged += 1
-    return created, len(records) - created - unchanged, unchanged
-
-
-def _record_sync(
-    database: sqlite3.Connection, source_id: int, started_at: str, finished_at: str,
-    started: float, counts: tuple[int, int, int] = (0, 0, 0), error: Exception | None = None,
-) -> None:
-    database.execute(
-        """INSERT INTO sync_runs (
-            source_id, started_at, finished_at, status, created_count,
-            updated_count, unchanged_count, duration_ms, error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (source_id, started_at, finished_at, "failed" if error is not None else "succeeded",
-         *counts, round((time.monotonic() - started) * 1000), str(error) if error is not None else None),
-    )
-
-
-def sync(database: sqlite3.Connection, timeout: float) -> tuple[int, int]:
-    sources = database.execute(
-        "SELECT id, url FROM sources WHERE provider = 'personio' ORDER BY id"
-    ).fetchall()
-    succeeded = 0
-    for source_id, url in sources:
-        started_at = datetime.now(timezone.utc).isoformat()
-        started = time.monotonic()
-        try:
-            records = fetch_records(url, timeout)
-            finished_at = datetime.now(timezone.utc).isoformat()
-            with database:
-                database.execute(
-                    "UPDATE jobs SET missing_imports = missing_imports + 1 "
-                    "WHERE source_id = ? AND closed_at IS NULL", (source_id,),
-                )
-                counts = save_jobs(database, source_id, records, finished_at)
-                database.execute(
-                    "UPDATE jobs SET closed_at = ? "
-                    "WHERE source_id = ? AND missing_imports >= 2 AND closed_at IS NULL",
-                    (finished_at, source_id),
-                )
-                database.execute(
-                    "UPDATE sources SET last_success_at = ? WHERE id = ?", (finished_at, source_id),
-                )
-                _record_sync(database, source_id, started_at, finished_at, started, counts)
-        except (OSError, ValueError, sqlite3.Error) as error:
-            finished_at = datetime.now(timezone.utc).isoformat()
-            with database:
-                _record_sync(database, source_id, started_at, finished_at, started, error=error)
         else:
-            succeeded += 1
-    return succeeded, len(sources) - succeeded
+            updated += 1
+    database.executemany(
+        "UPDATE jobs SET last_seen_at = ?, missing_imports = 0, closed_at = NULL "
+        "WHERE source_id = ? AND external_id = ?",
+        unchanged,
+    )
+    return created, updated, len(unchanged)
