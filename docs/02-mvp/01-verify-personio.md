@@ -7,9 +7,18 @@ discovery candidates. Deduplicate the hosts and verify each current feed at
 
 ```sh
 uv run jobsh discovery
+uv run jobsh discovery --limit 100
 ```
 
 Register verified feed endpoints directly in SQLite.
+
+Common Crawl pages are read lazily, one index block per request. `--limit`
+stops reading once that many distinct candidate hosts have been encountered;
+duplicates and unrelated hosts do not count. The selected hosts are sorted
+before verification. The limit counts hosts, not verified feeds or job listings.
+Without a limit, all pages are read. Requests remain sequential with a one-second
+pause between pages; feed verification uses `--workers` (default 8).
+Malformed JSON responses are retried twice before reporting the failing URL.
 
 Keep a manually reviewed reference sample of 20 Personio career pages. Use it to
 measure discovery gaps and compare feeds with their current career pages.

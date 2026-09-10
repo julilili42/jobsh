@@ -1,7 +1,9 @@
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from jobsh.common_crawl import latest_snapshot, records
+from jobsh.discovery import discover
 
 
 class CommonCrawlTest(unittest.TestCase):
@@ -24,10 +26,65 @@ class CommonCrawlTest(unittest.TestCase):
         ]
 
         self.assertEqual(
-            records("example.com", 1),
+            list(records("example.com", 1)),
             [
                 {"url": "https://one.example"},
                 {"url": "https://two.example"},
             ],
         )
         sleep.assert_called_once_with(1)
+        for call in fetch.call_args_list[1:]:
+            self.assertEqual(parse_qs(urlsplit(call.args[0]).query)["pageSize"], ["1"])
+
+    @patch("jobsh.common_crawl.time.sleep")
+    @patch("jobsh.common_crawl.fetch")
+    def test_bad_json_is_retried_without_yielding_partial_pages(self, fetch, sleep):
+        fetch.side_effect = [
+            b'{"bad"', b'[{"cdx-api":"index","to":"2026-01-01"}]',
+            b'{"pages"', b'{"pages":1}',
+            b'{"url":"https://one.example"}\n{"url"broken}\n',
+            b'{"url":"https://one.example"}\n{"url":"https://two.example"}\n',
+        ]
+        self.assertEqual(list(records("example.com", 1)),
+                         [{"url": "https://one.example"}, {"url": "https://two.example"}])
+        self.assertEqual(sleep.call_count, 3)
+        fetch.side_effect = None
+        fetch.return_value = b'{"url"broken}'
+        fetch.reset_mock()
+        with self.assertRaisesRegex(ValueError, "invalid Common Crawl JSON from https://index.commoncrawl.org/collinfo.json"):
+            latest_snapshot(1)
+        self.assertEqual(fetch.call_count, 3)
+
+    @patch("jobsh.discovery.verify", return_value=None)
+    @patch("jobsh.common_crawl.time.sleep")
+    @patch("jobsh.common_crawl.fetch")
+    def test_discovery_stops_after_enough_distinct_hosts(self, fetch, sleep, verify):
+        fetch.side_effect = [
+            b'[{"cdx-api":"index","to":"2026-01-01"}]',
+            b'{"pages":100}',
+            b'{"url":"https://jobs.personio.de/"}\n'
+            b'{"url":"https://nested.alpha.jobs.personio.de/"}\n'
+            b'{"url":"https://zeta.jobs.personio.de/job/1"}\n'
+            b'{"url":"https://zeta.jobs.personio.de/job/2"}\n',
+            b'{"url":"https://beta.jobs.personio.de/job/1"}\n'
+            b'{"url":"https://alpha.jobs.personio.de/job/1"}\n',
+        ]
+        self.assertEqual(discover(limit=2, workers=1, timeout=1), [])
+        self.assertEqual(fetch.call_count, 4)  # Metadata + two pages, not all 100 pages.
+        sleep.assert_called_once_with(1)
+        self.assertEqual([call.args[0] for call in verify.call_args_list],
+                         ["beta.jobs.personio.de", "zeta.jobs.personio.de"])
+
+    @patch("jobsh.common_crawl.time.sleep")
+    @patch("jobsh.common_crawl.fetch")
+    def test_records_only_fetches_when_consumed(self, fetch, sleep):
+        fetch.side_effect = [
+            b'[{"cdx-api":"index","to":"2026-01-01"}]', b'{"pages":100}',
+            b'{"url":"https://one.example"}\n',
+        ]
+        rows = records("example.com", 1)
+        fetch.assert_not_called()
+        self.assertEqual(next(rows), {"url": "https://one.example"})
+        rows.close()
+        self.assertEqual(fetch.call_count, 3)
+        sleep.assert_not_called()
