@@ -53,7 +53,7 @@ class SafeReimportsTest(unittest.TestCase):
         for chunks in (interrupted(), iter([b"123456789012", b"123456789012"])):
             response = Mock()
             response.iter_bytes.return_value = chunks
-            with patch("jobsh.http.httpx.stream") as stream, patch(
+            with patch("jobsh.http.CLIENT.stream") as stream, patch(
                 "jobsh.personio_feed.fetch", side_effect=lambda url, timeout: http_fetch(url, timeout, limit=20)
             ):
                 stream.return_value.__enter__.return_value = response

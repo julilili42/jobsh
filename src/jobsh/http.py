@@ -1,10 +1,13 @@
 import time
+from atexit import register
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 import httpx
 
 USER_AGENT = "jobsh/0.1 (+https://github.com/julilili42/jobsh)"
+CLIENT = httpx.Client(headers={"User-Agent": USER_AGENT}, follow_redirects=True)
+register(CLIENT.close)
 _retry_at: dict[str, float] = {}
 
 
@@ -15,13 +18,7 @@ def fetch(url: str, timeout: float, limit: int = 10_000_000) -> bytes:
     if _retry_at.get(origin, 0) > time.time():
         raise OSError(f"Retry-After cooldown active for {origin}")
     try:
-        with httpx.stream(
-            "GET",
-            url,
-            headers={"User-Agent": USER_AGENT},
-            timeout=timeout,
-            follow_redirects=True,
-        ) as response:
+        with CLIENT.stream("GET", url, timeout=timeout) as response:
             response.raise_for_status()
             data = bytearray()
             for chunk in response.iter_bytes(min(64 * 1024, limit + 1)):
