@@ -1,7 +1,7 @@
 # 02 - MVP Implementation
 
-Turn the [initial idea](../01-init/README.md) into a working local aggregator for
-German IT jobs. Start with Personio to prove the complete feed-to-search path.
+Build a working local aggregator for German IT jobs. Start with Personio to
+prove the complete feed-to-search path.
 Other providers and SSH can follow after the MVP works.
 
 - [Scope](scope.md)
