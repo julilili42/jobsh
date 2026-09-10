@@ -51,6 +51,12 @@ class ManualImportTest(unittest.TestCase):
         changed = normalize_feed(
             FIXTURE.read_bytes().replace(b"Python Developer", b"Senior Developer"), FEED_URL
         )
+        changed[0].update(
+            description="New duties", locations='["Hamburg"]', location_text="Hamburg", work_mode="hybrid",
+            employment_type="part-time", original_url="https://example.com/new-job",
+            german_eligibility_evidence="Germany", published_at="2026-09-02", source_category="IT",
+            content_hash="updated-hash", raw_record="<position>updated</position>",
+        )
         self.assertEqual(save_jobs(database, source_id, changed, "2026-09-03"), (0, 1, 0))
         final = dict(database.execute("SELECT * FROM jobs").fetchone())
         self.assertEqual(final["id"], first["id"])
@@ -58,6 +64,7 @@ class ManualImportTest(unittest.TestCase):
         self.assertEqual(final["last_seen_at"], "2026-09-03")
         for key, value in changed[0].items():
             self.assertEqual(final[key], value, key)
+        self.assertEqual((final["it_classification"], final["classification_rule"]), ("it", "category:it_with_role"))
 
     @patch("jobsh.personio_feed.fetch")
     def test_reimport_keeps_the_job_and_updates_changed_content(self, fetch) -> None:

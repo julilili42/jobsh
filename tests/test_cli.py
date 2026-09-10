@@ -62,17 +62,7 @@ class CliTest(unittest.TestCase):
 
     def test_parser_reads_discovery_and_sync_options(self) -> None:
         discovery = _build_parser().parse_args(
-            [
-                "--db",
-                "custom.db",
-                "discovery",
-                "--limit",
-                "5",
-                "--workers",
-                "2",
-                "--timeout",
-                "3",
-            ]
+            ["--db", "custom.db", "discovery", "--limit", "5", "--workers", "2", "--timeout", "3"]
         )
         self.assertEqual(discovery.command, "discovery")
         self.assertEqual(discovery.db, Path("custom.db"))

@@ -43,10 +43,6 @@ def discover(limit: int, workers: int, timeout: float) -> list[tuple[str, str, s
         hosts = hosts[:limit]
     print(f"verifying {len(hosts)} candidate hosts", file=sys.stderr)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        verified = filter(
-            None,
-            pool.map(lambda host: verify(host, timeout), hosts),
-        )
-        results = sorted(verified)
+        results = sorted(filter(None, pool.map(lambda host: verify(host, timeout), hosts)))
     print(f"verified {len(results)} feeds", file=sys.stderr)
     return results

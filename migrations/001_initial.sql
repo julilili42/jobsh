@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     location_text TEXT,
     work_mode TEXT NOT NULL CHECK (work_mode IN ('remote', 'hybrid', 'onsite', 'unknown')),
     employment_type TEXT,
+    source_category TEXT,
+    classification_rule TEXT,
     it_classification TEXT NOT NULL DEFAULT 'uncertain'
         CHECK (it_classification IN ('it', 'non_it', 'uncertain')),
     original_url TEXT NOT NULL,

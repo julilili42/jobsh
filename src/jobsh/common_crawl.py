@@ -9,8 +9,7 @@ COLLECTIONS_URL = "https://index.commoncrawl.org/collinfo.json"
 
 def latest_snapshot(timeout: float) -> str:
     collections = json.loads(fetch(COLLECTIONS_URL, timeout))
-    collection = max(collections, key=lambda item: item["to"])
-    return collection["cdx-api"]
+    return max(collections, key=lambda item: item["to"])["cdx-api"]
 
 
 def records(domain: str, timeout: float) -> list[dict[str, str]]:
