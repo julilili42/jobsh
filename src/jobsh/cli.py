@@ -73,7 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", type=Path, default=Path("jobsh.db"))
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser(
-        "discovery", help="find and register public Personio feeds"
+        "discovery", help="find and register public job feeds"
     )
     command.set_defaults(run=_discovery)
     command.add_argument("--provider", choices=ADAPTERS, default="personio")

@@ -18,6 +18,19 @@ uv run python -m unittest discover -s tests
 
 Implementation notes live in [`docs/02-mvp`](docs/02-mvp/README.md).
 
+## Greenhouse
+
+```bash
+uv run jobsh discovery --provider greenhouse --limit 100
+uv run jobsh sync
+```
+
+The adapter recognizes hosted and embedded boards on `boards.greenhouse.io`
+and `job-boards.greenhouse.io`. It uses the public Job Board API without an API key.
+Boards are imported worldwide; Germany eligibility is recorded only when the
+location explicitly names Germany or Deutschland. Search does not yet enforce
+Germany eligibility. A remote label alone is not evidence of Germany eligibility.
+
 ## Adding a provider
 
 Register an `Adapter` in `src/jobsh/adapters.py` with:
