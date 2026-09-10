@@ -86,7 +86,7 @@ def _build_parser() -> argparse.ArgumentParser:
     command.add_argument("--workers", type=int, default=32)
     command.add_argument("--timeout", type=float, default=15)
 
-    command = commands.add_parser("search", help="search open, confirmed IT jobs")
+    command = commands.add_parser("search", help="search open, confirmed German IT jobs")
     command.set_defaults(run=_search)
     command.add_argument("query", nargs="?", default="")
     command.add_argument("--title", default="")

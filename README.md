@@ -27,9 +27,8 @@ uv run jobsh sync
 
 The adapter recognizes hosted and embedded boards on `boards.greenhouse.io`
 and `job-boards.greenhouse.io`. It uses the public Job Board API without an API key.
-Boards are imported worldwide; Germany eligibility is recorded only when the
-location explicitly names Germany or Deutschland. Search does not yet enforce
-Germany eligibility. A remote label alone is not evidence of Germany eligibility.
+Boards are imported worldwide. Search returns open IT jobs with explicit Germany
+eligibility; ambiguous jobs remain stored and accessible through `show`.
 
 ## Adding a provider
 

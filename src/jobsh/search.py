@@ -7,17 +7,21 @@ JOB_SELECT = (
 )
 
 
-def search(
-    database: sqlite3.Connection, query: str = "", *, title: str = "",
-    location: str = "", work_mode: str | None = None, limit: int = 20, offset: int = 0,
-) -> list[dict]:
+def _validate(query: str, work_mode: str | None, limit: int, offset: int) -> None:
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError("limit must be 1..100 and offset must be >= 0")
     if work_mode not in (None, "remote", "hybrid", "onsite", "unknown"):
         raise ValueError("invalid work mode")
     if len(query) > 1000:
         raise ValueError("query must be at most 1000 characters")
-    conditions = ["j.it_classification = 'it'", "j.closed_at IS NULL"]
+
+
+def _filters(
+    query: str, title: str, location: str, work_mode: str | None,
+) -> tuple[list[str], list[str]]:
+    conditions = [
+        "j.it_classification = 'it'", "j.german_eligibility = 'eligible'", "j.closed_at IS NULL",
+    ]
     parameters = []
     terms = []
     for term in query.split():
@@ -38,6 +42,15 @@ def search(
     if work_mode:
         conditions.append("j.work_mode = ?")
         parameters.append(work_mode)
+    return conditions, parameters
+
+
+def search(
+    database: sqlite3.Connection, query: str = "", *, title: str = "",
+    location: str = "", work_mode: str | None = None, limit: int = 20, offset: int = 0,
+) -> list[dict]:
+    _validate(query, work_mode, limit, offset)
+    conditions, parameters = _filters(query, title, location, work_mode)
     rows = database.execute(
         JOB_SELECT + " WHERE " + " AND ".join(conditions) + " ORDER BY j.id LIMIT ? OFFSET ?",
         parameters + [limit, offset],

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from jobsh.cli import main
 from jobsh.db import MIGRATION, connect
-from jobsh.jobs import classify, save_jobs
+from jobsh.jobs import classify, classify_germany, save_jobs
 from jobsh.personio_feed import normalize_feed
 from jobsh.search import get_job, search
 from jobsh.sources import register_source
@@ -43,6 +43,23 @@ class SearchTest(unittest.TestCase):
                 self.assertEqual(actual, item["expected"])
                 self.assertTrue(rule)
 
+    def test_german_eligibility(self):
+        for location, description, expected in (
+            ("Berlin", "", "eligible"),
+            ("Königsbrunn", "", "eligible"),
+            ("Remote, Germany", "", "eligible"),
+            ("Remote", "Work remotely from Germany", "eligible"),
+            ("Remote, US", "", "ineligible"),
+            ("Paris, France", "", "ineligible"),
+            ("Wien", "", "ineligible"),
+            ("Remote", "Remote work is not available from Germany", "ineligible"),
+            ("Remote", "German language required", "uncertain"),
+        ):
+            with self.subTest(location=location):
+                classification, rule = classify_germany(location, description)
+                self.assertEqual(classification, expected)
+                self.assertTrue(rule)
+
     def test_composed_filters_technical_terms_and_pagination(self):
         with closing(connect(":memory:")) as database:
             seed(database)
@@ -54,7 +71,8 @@ class SearchTest(unittest.TestCase):
                 for location in ("", "Berlin", "Hamburg"):
                     for mode in (None, "remote", "onsite", "hybrid"):
                         expected = [i for i, row in enumerate(SAMPLE, 1)
-                                    if row["expected"] == "it" and title.lower() in row["title"].lower()
+                                    if row["expected"] == "it" and row.get("location") in ("Berlin", "Hamburg")
+                                    and title.lower() in row["title"].lower()
                                     and location.lower() in row.get("location", "").lower()
                                     and (mode is None or row.get("mode", "unknown") == mode)]
                         self.assertEqual([j["id"] for j in search(database, title=title, location=location, work_mode=mode)], expected)
@@ -117,17 +135,24 @@ class SearchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "old.db"
             with closing(sqlite3.connect(path)) as database, database:
-                schema = MIGRATION.read_text().replace("    source_category TEXT,\n", "").replace("    classification_rule TEXT,\n", "")
+                schema = (MIGRATION.read_text().replace("    source_category TEXT,\n", "")
+                          .replace("    classification_rule TEXT,\n", "")
+                          .replace("    german_eligibility TEXT NOT NULL DEFAULT 'uncertain'\n"
+                                   "        CHECK (german_eligibility IN ('eligible', 'ineligible', 'uncertain')),\n", "")
+                          .replace("    german_eligibility_rule TEXT,\n", ""))
                 database.executescript(schema)
                 register_source(database, "personio", "example", URL, "manual")
                 database.execute(
                     "INSERT INTO jobs (source_id, external_id, title, locations, work_mode, "
-                    "original_url, first_seen_at, last_seen_at, content_hash, raw_record) "
-                    "VALUES (1, '1', 'Go Developer', '[]', 'remote', ?, 'first', 'last', 'hash', '<position/>')",
+                    "location_text, german_eligibility_evidence, original_url, first_seen_at, "
+                    "last_seen_at, content_hash, raw_record) VALUES "
+                    "(1, '1', 'Go Developer', '[]', 'remote', 'Berlin', 'Berlin', ?, "
+                    "'first', 'last', 'hash', '<position/>')",
                     (URL,),
                 )
             for _ in range(2):
                 with closing(connect(path)) as database:
                     job, = search(database, "Go")
                     self.assertEqual(job["classification_rule"], "title:technical_role")
+                    self.assertEqual(job["german_eligibility"], "eligible")
                     self.assertEqual((job["id"], job["first_seen_at"], job["content_hash"]), (1, "first", "hash"))

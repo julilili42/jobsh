@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS jobs (
         CHECK (it_classification IN ('it', 'non_it', 'uncertain')),
     original_url TEXT NOT NULL,
     german_eligibility_evidence TEXT,
+    german_eligibility TEXT NOT NULL DEFAULT 'uncertain'
+        CHECK (german_eligibility IN ('eligible', 'ineligible', 'uncertain')),
+    german_eligibility_rule TEXT,
     published_at TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
