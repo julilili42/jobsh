@@ -8,6 +8,8 @@ uv run jobsh discovery --provider personio --limit 100
 uv run jobsh discovery --provider greenhouse --limit 100
 uv run jobsh discovery --provider ashby --limit 100
 uv run jobsh discovery --provider smartrecruiters --limit 100
+uv run jobsh discovery --provider dvinci --limit 100
+uv run jobsh discovery --provider lever --limit 100
 uv run jobsh sync
 uv run jobsh search python --location Berlin --json
 uv run jobsh show 42 --json
@@ -15,7 +17,7 @@ uv run jobsh show 42 --json
 
 Data is stored in `jobsh.db`. Use `--db PATH` before the command to select another
 database. Discovery and sync import public jobs from Personio, Greenhouse,
-Ashby and SmartRecruiters.
+Ashby, SmartRecruiters, d.vinci and Lever.
 Search includes all open jobs, regardless of occupation or country.
 
 Ashby imports all listed jobs, including secondary locations and structured work
@@ -70,7 +72,7 @@ Existing jobs are preserved; legacy classification columns are ignored.
 
 ## Adding a provider
 
-Register an `Adapter` in `src/jobsh/adapters.py` with:
+Register an `Adapter` in `src/jobsh/adapters/__init__.py` with:
 
 - `domain`: the Common Crawl discovery domain.
 - `source(url)`: extract `(provider_account, feed_url)`, or return `None`.
