@@ -3,7 +3,7 @@ import json
 import xml.etree.ElementTree as ET
 from urllib.parse import urlsplit
 
-from .http import fetch
+from ..http import fetch
 
 
 def _text(element: ET.Element, tag: str) -> str:

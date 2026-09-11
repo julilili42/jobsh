@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from urllib.parse import urlencode, urlsplit
 
-from .http import fetch
+from ..http import fetch
 
 # Shared across source workers: at most eight simultaneous detail requests.
 DETAILS = ThreadPoolExecutor(max_workers=8, thread_name_prefix="smartrecruiters")

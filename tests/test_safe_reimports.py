@@ -15,7 +15,7 @@ EMPTY = b"<workzag-jobs />"
 
 
 class SafeReimportsTest(unittest.TestCase):
-    @patch("jobsh.personio_feed.fetch")
+    @patch("jobsh.adapters.personio.fetch")
     def test_same_external_id_is_isolated_between_sources(self, fetch):
         database = connect(":memory:")
         self.addCleanup(database.close)
@@ -41,7 +41,7 @@ class SafeReimportsTest(unittest.TestCase):
         self.addCleanup(database.close)
         with database:
             register_source(database, "personio", "example", FEED_URL, "manual")
-        with patch("jobsh.personio_feed.fetch", return_value=FEED):
+        with patch("jobsh.adapters.personio.fetch", return_value=FEED):
             self.assertEqual(sync(database, 3), (1, 0))
         before = dict(database.execute("SELECT * FROM jobs").fetchone())
         source = dict(database.execute("SELECT * FROM sources").fetchone())
@@ -54,7 +54,7 @@ class SafeReimportsTest(unittest.TestCase):
             response = Mock()
             response.iter_bytes.return_value = chunks
             with patch("jobsh.http.CLIENT.stream") as stream, patch(
-                "jobsh.personio_feed.fetch", side_effect=lambda url, timeout: http_fetch(url, timeout, limit=20)
+                "jobsh.adapters.personio.fetch", side_effect=lambda url, timeout: http_fetch(url, timeout, limit=20)
             ):
                 stream.return_value.__enter__.return_value = response
                 self.assertEqual(sync(database, 3), (0, 1))
@@ -67,7 +67,7 @@ class SafeReimportsTest(unittest.TestCase):
             database = connect(path)
             with database:
                 register_source(database, "personio", "example", FEED_URL, "manual")
-            with patch("jobsh.personio_feed.fetch", return_value=FEED):
+            with patch("jobsh.adapters.personio.fetch", return_value=FEED):
                 self.assertEqual(sync(database, 3), (1, 0))
             database.execute("ALTER TABLE jobs DROP COLUMN missing_imports")
             before = dict(database.execute("SELECT * FROM jobs").fetchone())
@@ -80,7 +80,7 @@ class SafeReimportsTest(unittest.TestCase):
                 )
                 database.close()
 
-    @patch("jobsh.personio_feed.fetch")
+    @patch("jobsh.adapters.personio.fetch")
     def test_job_lifecycle_and_failed_imports(self, fetch):
         database = connect(":memory:")
         self.addCleanup(database.close)

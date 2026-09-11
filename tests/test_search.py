@@ -11,7 +11,7 @@ from unittest.mock import patch
 from jobsh.cli import main
 from jobsh.db import MIGRATION, connect
 from jobsh.jobs import save_jobs
-from jobsh.personio_feed import normalize_feed
+from jobsh.adapters.personio import normalize_feed
 from jobsh.search import get_job, search
 from jobsh.sources import register_source
 

@@ -4,7 +4,7 @@ import json
 import re
 from urllib.parse import urlsplit
 
-from .http import fetch
+from ..http import fetch
 
 
 def source(url: str) -> tuple[str, str] | None:

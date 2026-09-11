@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from jobsh.db import connect
 from jobsh.jobs import save_jobs
-from jobsh.personio_feed import normalize_feed
+from jobsh.adapters.personio import normalize_feed
 from jobsh.sources import register_source, sync
 
 FIXTURE = Path(__file__).parents[1] / "testdata" / "personio.xml"
@@ -72,7 +72,7 @@ class ManualImportTest(unittest.TestCase):
         self.assertEqual(database.execute("SELECT count(*) FROM companies").fetchone()[0], 1)
         self.assertEqual(database.execute("SELECT count(*) FROM sources").fetchone()[0], 1)
 
-    @patch("jobsh.personio_feed.fetch")
+    @patch("jobsh.adapters.personio.fetch")
     def test_sync_continues_after_invalid_feed(self, fetch) -> None:
         database = connect(":memory:")
         self.addCleanup(database.close)
@@ -113,7 +113,7 @@ class ManualImportTest(unittest.TestCase):
         for key, value in changed[0].items():
             self.assertEqual(final[key], value, key)
 
-    @patch("jobsh.personio_feed.fetch")
+    @patch("jobsh.adapters.personio.fetch")
     def test_reimport_keeps_the_job_and_updates_changed_content(self, fetch) -> None:
         original = FIXTURE.read_bytes()
         changed = original.replace(b"Python Developer", b"Senior Python Developer")

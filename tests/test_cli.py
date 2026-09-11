@@ -14,7 +14,7 @@ FEED = (Path(__file__).parents[1] / "testdata/personio.xml").read_bytes()
 
 
 class CliTest(unittest.TestCase):
-    @patch("jobsh.personio_feed.fetch", side_effect=[OSError("offline"), FEED])
+    @patch("jobsh.adapters.personio.fetch", side_effect=[OSError("offline"), FEED])
     def test_partial_sync_exits_with_error_and_commits_success(self, fetch):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "jobs.db"
@@ -37,7 +37,7 @@ class CliTest(unittest.TestCase):
                     "SELECT status FROM sync_runs ORDER BY id"
                 ).fetchall(), [("failed",), ("succeeded",)])
 
-    @patch("jobsh.personio_feed.fetch")
+    @patch("jobsh.adapters.personio.fetch")
     @patch("jobsh.discovery.records")
     def test_discovery_registers_only_valid_feeds_and_respects_limit(self, records, fetch):
         accounts = ("alpha", "alpha", "broken", "empty", "zeta")

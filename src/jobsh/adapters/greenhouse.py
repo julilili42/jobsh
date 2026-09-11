@@ -5,7 +5,7 @@ import re
 from html import unescape
 from urllib.parse import parse_qs, urlsplit
 
-from .http import fetch
+from ..http import fetch
 
 
 def source(url: str) -> tuple[str, str] | None:

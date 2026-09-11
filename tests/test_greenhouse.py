@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from jobsh.db import connect
-from jobsh.greenhouse import normalize_feed, source
+from jobsh.adapters.greenhouse import normalize_feed, source
 from jobsh.sources import register_source, sync
 
 JOB = {"id": 42, "title": "Software Engineer", "absolute_url": "https://example.org/jobs/42",
@@ -38,7 +38,7 @@ class GreenhouseTest(unittest.TestCase):
                 normalize_feed(data)
         self.assertEqual(normalize_feed(feed([])), [])
 
-    @patch("jobsh.greenhouse.fetch")
+    @patch("jobsh.adapters.greenhouse.fetch")
     def test_sync_and_failed_feed_preserve_jobs(self, fetch):
         database = connect(":memory:")
         self.addCleanup(database.close)

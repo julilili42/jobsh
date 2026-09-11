@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from jobsh.discovery import candidate_hosts
-from jobsh.personio_feed import validated_positions, normalize_feed
+from jobsh.adapters.personio import validated_positions, normalize_feed
 
 FIXTURES = Path(__file__).parents[1] / "testdata"
 

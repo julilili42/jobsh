@@ -75,7 +75,7 @@ Register an `Adapter` in `src/jobsh/adapters.py` with:
 - `domain`: the Common Crawl discovery domain.
 - `source(url)`: extract `(provider_account, feed_url)`, or return `None`.
 - `fetch_records(url, timeout)`: validate and normalize the complete feed into job
-  dictionaries (see `personio_feed.py` and `jobs.JOB_FIELDS`). Raise `ValueError`
+  dictionaries (see `adapters/personio.py` and `jobs.JOB_FIELDS`). Raise `ValueError`
   for invalid or incomplete feeds, and `OSError` for network errors. Only a
   successfully validated empty feed may return `[]`.
 - Optional `verify(url, timeout)`: a lightweight discovery check; otherwise
