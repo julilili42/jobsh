@@ -11,6 +11,12 @@ register(CLIENT.close)
 _retry_at: dict[str, float] = {}
 
 
+class HTTPStatusError(OSError):
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        super().__init__(message)
+
+
 def fetch(url: str, timeout: float, limit: int = 10_000_000) -> bytes:
     if timeout <= 0 or limit < 1:
         raise ValueError("timeout and response limit must be > 0")
@@ -43,6 +49,6 @@ def fetch(url: str, timeout: float, limit: int = 10_000_000) -> bytes:
                 except (ValueError, TypeError, OverflowError):
                     until = now + 60
             _retry_at[origin] = max(_retry_at.get(origin, 0), now, until)
-        raise OSError(str(error)) from error
+        raise HTTPStatusError(error.response.status_code, str(error)) from error
     except httpx.HTTPError as error:
         raise OSError(str(error)) from error

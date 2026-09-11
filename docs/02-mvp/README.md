@@ -1,5 +1,8 @@
 # 02 - MVP Implementation
 
+Historical MVP plan. The current implementation stores all jobs and exposes search
+through MCP; IT/country classification was removed. See the [current README](../../README.md).
+
 Build a working local aggregator for German IT jobs. Start with Personio to
 prove the complete feed-to-search path.
 Other providers and SSH can follow after the MVP works.

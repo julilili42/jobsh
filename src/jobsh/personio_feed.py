@@ -61,7 +61,6 @@ def _normalize_position(position: ET.Element, host: str) -> dict[str, str | None
         "employment_type": _text(position, "employmentType") or None,
         "source_category": _text(position, "department") or None,
         "original_url": f"https://{host}/job/{external_id}?display=de",
-        "german_eligibility_evidence": location_text or None,
         "published_at": _text(position, "createdAt") or None,
     }
     record["content_hash"] = hashlib.sha256(

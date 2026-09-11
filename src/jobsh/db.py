@@ -1,8 +1,6 @@
 import sqlite3
 from pathlib import Path
 
-from .jobs import classify, classify_germany
-
 MIGRATION = Path(__file__).parents[2] / "migrations" / "001_initial.sql"
 
 
@@ -18,27 +16,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
         for name, definition in (
             ("missing_imports", "INTEGER NOT NULL DEFAULT 0 CHECK (missing_imports >= 0)"),
             ("source_category", "TEXT"),
-            ("classification_rule", "TEXT"),
-            ("german_eligibility", "TEXT NOT NULL DEFAULT 'uncertain' CHECK (german_eligibility IN ('eligible', 'ineligible', 'uncertain'))"),
-            ("german_eligibility_rule", "TEXT"),
         ):
             if name not in columns:
                 database.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
-        for job_id, title, description, category in database.execute(
-            "SELECT id, title, description, source_category FROM jobs WHERE classification_rule IS NULL"
-        ).fetchall():
-            database.execute(
-                "UPDATE jobs SET it_classification = ?, classification_rule = ? WHERE id = ?",
-                (*classify(title, description or "", category or ""), job_id),
-            )
-        for job_id, location, description, evidence in database.execute(
-            "SELECT id, location_text, description, german_eligibility_evidence FROM jobs "
-            "WHERE german_eligibility_rule IS NULL"
-        ).fetchall():
-            database.execute(
-                "UPDATE jobs SET german_eligibility = ?, german_eligibility_rule = ? WHERE id = ?",
-                (*classify_germany(location or "", description or "", evidence or ""), job_id),
-            )
     if not database.execute("SELECT 1 FROM sqlite_master WHERE name = 'jobs_fts'").fetchone():
         database.executescript(
             "BEGIN IMMEDIATE;\n" + MIGRATION.with_name("002_search.sql").read_text() + "\nCOMMIT;"

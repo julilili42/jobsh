@@ -27,14 +27,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     work_mode TEXT NOT NULL CHECK (work_mode IN ('remote', 'hybrid', 'onsite', 'unknown')),
     employment_type TEXT,
     source_category TEXT,
-    classification_rule TEXT,
-    it_classification TEXT NOT NULL DEFAULT 'uncertain'
-        CHECK (it_classification IN ('it', 'non_it', 'uncertain')),
     original_url TEXT NOT NULL,
-    german_eligibility_evidence TEXT,
-    german_eligibility TEXT NOT NULL DEFAULT 'uncertain'
-        CHECK (german_eligibility IN ('eligible', 'ineligible', 'uncertain')),
-    german_eligibility_rule TEXT,
     published_at TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -44,6 +37,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     raw_record TEXT NOT NULL,
     UNIQUE (source_id, external_id)
 );
+
+CREATE INDEX IF NOT EXISTS jobs_open_id ON jobs(id) WHERE closed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS sync_runs (
     id INTEGER PRIMARY KEY,

@@ -50,9 +50,6 @@ def normalize_feed(data: bytes) -> list[dict[str, str | None]]:
                 "location_text": location or None, "work_mode": mode,
                 "employment_type": None, "source_category": category or None,
                 "original_url": url, "published_at": None,
-                "german_eligibility_evidence": location if re.search(
-                    r"\b(Germany|Deutschland)\b", location, re.I
-                ) else None,
             }
             record["content_hash"] = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
             record["raw_record"] = json.dumps(job, ensure_ascii=False, sort_keys=True)

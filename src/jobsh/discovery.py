@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from functools import partial
 from urllib.parse import urlencode, urlsplit
 
-from .http import fetch
+from .http import HTTPStatusError, fetch
 from .adapters import ADAPTERS, Adapter
 
 COLLECTIONS_URL = "https://index.commoncrawl.org/collinfo.json"
@@ -34,9 +34,14 @@ def records(domain: str, timeout: float, state: dict | None = None):
              "output": "json", "pageSize": 1}
     pages = _read_json(f"{endpoint}?{urlencode(query | {'showNumPages': 'true'})}", timeout)["pages"]
     for page in range(state["page"], pages):
-        rows = _read_json(
-            f"{endpoint}?{urlencode(query | {'page': page, 'fl': 'url'})}", timeout, lines=True
-        )
+        try:
+            rows = _read_json(
+                f"{endpoint}?{urlencode(query | {'page': page, 'fl': 'url'})}", timeout, lines=True
+            )
+        except HTTPStatusError as error:
+            if error.status_code != 404:
+                raise
+            rows = []
         for offset in range(state["offset"], len(rows)):
             state.update(page=page, offset=offset + 1)
             yield rows[offset]

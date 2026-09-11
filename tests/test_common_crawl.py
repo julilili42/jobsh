@@ -5,6 +5,7 @@ from jobsh.adapters import Adapter
 from urllib.parse import parse_qs, urlsplit
 
 from jobsh.discovery import COLLECTIONS_URL, _read_json, discover, records
+from jobsh.http import HTTPStatusError
 
 
 class CommonCrawlTest(unittest.TestCase):
@@ -70,6 +71,18 @@ class CommonCrawlTest(unittest.TestCase):
         sleep.assert_called_once_with(1)
         for call in fetch.call_args_list[1:]:
             self.assertEqual(parse_qs(urlsplit(call.args[0]).query)["pageSize"], ["1"])
+
+    @patch("jobsh.discovery.time.sleep")
+    @patch("jobsh.discovery.fetch")
+    def test_records_skip_empty_filtered_pages(self, fetch, sleep) -> None:
+        fetch.side_effect = [
+            b'[{"cdx-api":"index","to":"2026-01-01"}]', b'{"pages":3}',
+            b'{"url":"https://one.example"}\n', HTTPStatusError(404, "not found"),
+            b'{"url":"https://two.example"}\n',
+        ]
+        self.assertEqual(list(records("example.com", 1)), [
+            {"url": "https://one.example"}, {"url": "https://two.example"},
+        ])
 
     @patch("jobsh.discovery.time.sleep")
     @patch("jobsh.discovery.fetch")

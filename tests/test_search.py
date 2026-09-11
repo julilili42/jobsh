@@ -10,12 +10,12 @@ from unittest.mock import patch
 
 from jobsh.cli import main
 from jobsh.db import MIGRATION, connect
-from jobsh.jobs import classify, classify_germany, save_jobs
+from jobsh.jobs import save_jobs
 from jobsh.personio_feed import normalize_feed
 from jobsh.search import get_job, search
 from jobsh.sources import register_source
 
-SAMPLE = json.loads((Path(__file__).parents[1] / "testdata/classification.json").read_text())
+SAMPLE = json.loads((Path(__file__).parents[1] / "testdata/search.json").read_text())
 URL = "https://example.jobs.personio.de/xml"
 
 
@@ -26,7 +26,8 @@ def seed(database):
     for index, item in enumerate(SAMPLE, 1):
         position = ET.SubElement(root, "position")
         for tag, value in (("id", str(index)), ("name", item["title"]),
-                           ("office", item.get("location", "")), ("department", item.get("category", ""))):
+                           ("office", item.get("location", "")),
+                           ("department", item.get("category", ""))):
             ET.SubElement(position, tag).text = value
         section = ET.SubElement(ET.SubElement(position, "jobDescriptions"), "jobDescription")
         ET.SubElement(section, "value").text = item.get("description", "") + " " + item.get("mode", "")
@@ -36,59 +37,43 @@ def seed(database):
 
 
 class SearchTest(unittest.TestCase):
-    def test_labeled_classifier_sample(self):
-        for item in SAMPLE:
-            with self.subTest(title=item["title"]):
-                actual, rule = classify(item["title"], item.get("description", ""), item.get("category", ""))
-                self.assertEqual(actual, item["expected"])
-                self.assertTrue(rule)
-
-    def test_german_eligibility(self):
-        for location, description, expected in (
-            ("Berlin", "", "eligible"),
-            ("Königsbrunn", "", "eligible"),
-            ("Remote, Germany", "", "eligible"),
-            ("Remote", "Work remotely from Germany", "eligible"),
-            ("Remote, US", "", "ineligible"),
-            ("Paris, France", "", "ineligible"),
-            ("Wien", "", "ineligible"),
-            ("Remote", "Remote work is not available from Germany", "ineligible"),
-            ("Remote", "German language required", "uncertain"),
-        ):
-            with self.subTest(location=location):
-                classification, rule = classify_germany(location, description)
-                self.assertEqual(classification, expected)
-                self.assertTrue(rule)
-
     def test_composed_filters_technical_terms_and_pagination(self):
         with closing(connect(":memory:")) as database:
             seed(database)
             for query, expected in (("Go", "Go Developer"), ("C++", "C++ Developer"),
                                     ("C#", "C# Developer"), (".NET", ".NET Developer")):
                 with self.subTest(query=query):
-                    self.assertEqual([j["title"] for j in search(database, query)], [expected])
+                    self.assertEqual([j["title"] for j in search(database, query)["jobs"]], [expected])
             for title in ("", "Developer"):
                 for location in ("", "Berlin", "Hamburg"):
                     for mode in (None, "remote", "onsite", "hybrid"):
                         expected = [i for i, row in enumerate(SAMPLE, 1)
-                                    if row["expected"] == "it" and row.get("location") in ("Berlin", "Hamburg")
-                                    and title.lower() in row["title"].lower()
+                                    if title.lower() in row["title"].lower()
                                     and location.lower() in row.get("location", "").lower()
                                     and (mode is None or row.get("mode", "unknown") == mode)]
-                        self.assertEqual([j["id"] for j in search(database, title=title, location=location, work_mode=mode)], expected)
-            self.assertEqual([j["id"] for j in search(database, "Go", location="Berlin", work_mode="remote")], [2])
-            all_ids = [j["id"] for j in search(database)]
-            paged = [j["id"] for offset in range(0, len(all_ids), 3) for j in search(database, limit=3, offset=offset)]
+                        self.assertEqual([j["id"] for j in search(database, title=title, location=location, work_mode=mode, limit=100)["jobs"]], expected)
+            self.assertEqual([j["id"] for j in search(database, "Go", location="Berlin", work_mode="remote")["jobs"]], [2])
+            all_ids = [j["id"] for j in search(database, limit=100)["jobs"]]
+            self.assertEqual(len(all_ids), len(SAMPLE))
+            paged, cursor = [], 0
+            while cursor is not None:
+                page = search(database, limit=3, cursor=cursor)
+                paged.extend(j["id"] for j in page["jobs"])
+                cursor = page["next_cursor"]
             self.assertEqual(paged, all_ids)
+            self.assertIsNone(search(database, limit=len(SAMPLE))["next_cursor"])
+            self.assertEqual(search(database, "Python", cursor=all_ids[-1])["jobs"], [])
             with self.assertRaises(ValueError):
                 search(database, "' OR 1=1 --")
-            self.assertEqual(search(database, 'Go" OR "Python'), [])
-            self.assertEqual(search(database, location="%"), [])
-            for options in ({"limit": 0}, {"limit": 101}, {"offset": -1}, {"work_mode": "anything"}):
+            self.assertEqual(search(database, 'Go" OR "Python')["jobs"], [])
+            self.assertEqual(search(database, location="%")["jobs"], [])
+            for options in ({"limit": 0}, {"limit": 101}, {"cursor": -1}, {"cursor": 2**63}, {"query": "a" * 1001}, {"location": "a" * 1001}, {"work_mode": "anything"}):
                 with self.assertRaises(ValueError):
                     search(database, **options)
-            self.assertEqual(get_job(database, 19)["it_classification"], "uncertain")
-            self.assertIsNone(get_job(database, 21)["german_eligibility_evidence"])
+            detail = get_job(database, 19)
+            self.assertEqual(detail["description"], "Wir verwenden moderne Software.")
+            self.assertNotIn("description", search(database)["jobs"][0])
+            self.assertNotIn("raw_record", detail)
 
     def test_index_updates_closures_and_rollback(self):
         with closing(connect(":memory:")) as database:
@@ -98,17 +83,17 @@ class SearchTest(unittest.TestCase):
             with self.assertRaises(RuntimeError), database:
                 database.execute("UPDATE jobs SET title = 'Rust Developer' WHERE id = 2")
                 raise RuntimeError("rollback")
-            self.assertEqual(search(database, "Go")[0]["id"], 2)
+            self.assertEqual(search(database, "Go")["jobs"][0]["id"], 2)
             database.execute("UPDATE jobs SET title = 'Rust Developer' WHERE id = 2")
-            self.assertEqual(search(database, "Go"), [])
-            self.assertEqual(search(database, "Rust")[0]["id"], 2)
+            self.assertEqual(search(database, "Go")["jobs"], [])
+            self.assertEqual(search(database, "Rust")["jobs"][0]["id"], 2)
             database.execute("UPDATE jobs SET closed_at = '2026-09-10' WHERE id = 2")
-            self.assertEqual(search(database, "Rust"), [])
+            self.assertEqual(search(database, "Rust")["jobs"], [])
             self.assertIsNotNone(get_job(database, 2)["closed_at"])
             save_jobs(database, source_id, [records[1]], "2026-09-11")
-            self.assertEqual(search(database, "Go")[0]["id"], original["id"])
+            self.assertEqual(search(database, "Go")["jobs"][0]["id"], original["id"])
             database.execute("DELETE FROM jobs WHERE id = 2")
-            self.assertEqual(search(database, "Go"), [])
+            self.assertEqual(search(database, "Go")["jobs"], [])
 
     def test_cli_json_and_missing_ids(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -120,7 +105,7 @@ class SearchTest(unittest.TestCase):
                 with patch("sys.argv", ["jobsh", "--db", str(path), *command]), redirect_stdout(out), redirect_stderr(err):
                     main()
                 result = json.loads(out.getvalue())
-                self.assertEqual((result[0] if isinstance(result, list) else result)["id"], 2)
+                self.assertEqual((result["jobs"][0] if "jobs" in result else result)["id"], 2)
                 self.assertEqual(err.getvalue(), "")
             for command in (["show", "999", "--json"], ["show", "0"], ["search", "--limit", "101"], ["nonsense"]):
                 out, err = io.StringIO(), io.StringIO()
@@ -131,28 +116,25 @@ class SearchTest(unittest.TestCase):
                 self.assertEqual(out.getvalue(), "")
                 self.assertTrue(err.getvalue())
 
-    def test_existing_jobs_are_classified_and_indexed_on_upgrade(self):
+    def test_legacy_jobs_remain_searchable_without_reclassification(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "old.db"
             with closing(sqlite3.connect(path)) as database, database:
-                schema = (MIGRATION.read_text().replace("    source_category TEXT,\n", "")
-                          .replace("    classification_rule TEXT,\n", "")
-                          .replace("    german_eligibility TEXT NOT NULL DEFAULT 'uncertain'\n"
-                                   "        CHECK (german_eligibility IN ('eligible', 'ineligible', 'uncertain')),\n", "")
-                          .replace("    german_eligibility_rule TEXT,\n", ""))
-                database.executescript(schema)
+                database.executescript(MIGRATION.read_text().replace("    source_category TEXT,\n", ""))
+                database.execute("ALTER TABLE jobs ADD COLUMN it_classification TEXT DEFAULT 'non_it'")
+                database.execute("ALTER TABLE jobs ADD COLUMN german_eligibility TEXT DEFAULT 'ineligible'")
                 register_source(database, "personio", "example", URL, "manual")
                 database.execute(
                     "INSERT INTO jobs (source_id, external_id, title, locations, work_mode, "
-                    "location_text, german_eligibility_evidence, original_url, first_seen_at, "
-                    "last_seen_at, content_hash, raw_record) VALUES "
-                    "(1, '1', 'Go Developer', '[]', 'remote', 'Berlin', 'Berlin', ?, "
-                    "'first', 'last', 'hash', '<position/>')",
-                    (URL,),
+                    "location_text, original_url, first_seen_at, last_seen_at, content_hash, raw_record) "
+                    "VALUES (1, '1', 'Go Developer', '[]', 'remote', 'Paris, France', ?, "
+                    "'first', 'last', 'hash', '<position/>')", (URL,),
                 )
             for _ in range(2):
                 with closing(connect(path)) as database:
-                    job, = search(database, "Go")
-                    self.assertEqual(job["classification_rule"], "title:technical_role")
-                    self.assertEqual(job["german_eligibility"], "eligible")
-                    self.assertEqual((job["id"], job["first_seen_at"], job["content_hash"]), (1, "first", "hash"))
+                    job, = search(database, "Go")["jobs"]
+                    self.assertEqual(job["id"], 1)
+                    self.assertNotIn("it_classification", get_job(database, 1))
+                    self.assertEqual(tuple(database.execute(
+                        "SELECT id, first_seen_at, content_hash, it_classification FROM jobs"
+                    ).fetchone()), (1, "first", "hash", "non_it"))

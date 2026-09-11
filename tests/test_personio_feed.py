@@ -44,7 +44,6 @@ class PersonioTest(unittest.TestCase):
                         "employment_type": "permanent",
                         "source_category": None,
                         "original_url": "https://example.jobs.personio.de/job/1?display=de",
-                        "german_eligibility_evidence": office or None,
                         "published_at": "2026-09-01",
                     },
                 )

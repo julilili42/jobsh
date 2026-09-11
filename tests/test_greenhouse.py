@@ -30,9 +30,8 @@ class GreenhouseTest(unittest.TestCase):
         record = normalize_feed(feed([JOB]))[0]
         self.assertEqual(record["description"], "<p>Python</p>")
         self.assertEqual(record["work_mode"], "remote")
-        self.assertEqual(record["german_eligibility_evidence"], "Remote, Germany")
+        self.assertEqual(record["location_text"], "Remote, Germany")
         self.assertIsNone(record["published_at"])
-        self.assertIsNone(normalize_feed(feed([JOB | {"location": {"name": "Remote, US"}}]))[0]["german_eligibility_evidence"])
         for data in (b'{}', b'{"jobs": null}', feed([JOB, JOB]), feed([JOB | {"content": None}]),
                      b'{"jobs": [], "meta": {"total": 1}}'):
             with self.assertRaises(ValueError):

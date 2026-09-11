@@ -48,14 +48,16 @@ def _sync(args: argparse.Namespace) -> None:
 
 def _search(args: argparse.Namespace) -> None:
     with closing(connect(args.db)) as database:
-        jobs = search(database, args.query, title=args.title, location=args.location,
-                      work_mode=args.work_mode, limit=args.limit, offset=args.offset)
+        page = search(database, args.query, title=args.title, location=args.location,
+                      work_mode=args.work_mode, limit=args.limit, cursor=args.cursor)
     if args.json:
-        print(json.dumps(jobs, ensure_ascii=False))
+        print(json.dumps(page, ensure_ascii=False))
         return
-    for job in jobs:
+    for job in page["jobs"]:
         print(f"{job['id']}\t{job['title']}\t{job['location_text'] or 'unknown'}\t{job['work_mode']}")
         print(f"  {job['original_url']} | {job['provider_account']} | last seen: {job['last_seen_at']}")
+    if page["next_cursor"] is not None:
+        print(f"next page: --cursor {page['next_cursor']}", file=sys.stderr)
 
 
 def _show(args: argparse.Namespace) -> None:
@@ -66,6 +68,12 @@ def _show(args: argparse.Namespace) -> None:
         return
     for key, value in job.items():
         print(f"{key}: {value if value is not None else 'unknown'}")
+
+
+def _serve(args: argparse.Namespace) -> None:
+    from .server import serve
+
+    serve(args.db)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -86,7 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
     command.add_argument("--workers", type=int, default=32)
     command.add_argument("--timeout", type=float, default=15)
 
-    command = commands.add_parser("search", help="search open, confirmed German IT jobs")
+    command = commands.add_parser("search", help="search all open jobs")
     command.set_defaults(run=_search)
     command.add_argument("query", nargs="?", default="")
     command.add_argument("--title", default="")
@@ -95,15 +103,17 @@ def _build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--work-mode", choices=("remote", "hybrid", "onsite", "unknown"))
     mode.add_argument("--remote", dest="work_mode", action="store_const", const="remote")
     command.add_argument("--limit", type=int, default=20)
-    command.add_argument("--offset", type=int, default=0)
+    command.add_argument("--cursor", type=int, default=0, help="continue after this job ID")
     command.add_argument("--json", action="store_true")
 
     command = commands.add_parser(
-        "show", help="show a job, including unclassified or closed jobs"
+        "show", help="show the full job, including closed jobs"
     )
     command.set_defaults(run=_show)
     command.add_argument("id", type=int)
     command.add_argument("--json", action="store_true")
+    command = commands.add_parser("serve", help="run the local MCP server over stdio")
+    command.set_defaults(run=_serve)
     return parser
 
 

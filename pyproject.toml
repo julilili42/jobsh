@@ -1,13 +1,14 @@
 [project]
 name = "jobsh"
 version = "0.1.0"
-description = "Local aggregator for German IT jobs"
+description = "Local job aggregator with full-text search and MCP access"
 authors = [
     { name = "julilili42", email = "Julian-jurcevic-2000@web.de" }
 ]
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
+    "mcp>=1.26,<2",
 ]
 
 [project.scripts]
