@@ -24,7 +24,10 @@ ASHBY = {
 SMART = {
     "id": "1", "name": "Python Engineer", "active": True, "visibility": "PUBLIC",
     "location": {"city": "Berlin", "country": "de", "remote": True},
-    "jobAd": {"sections": {"jobDescription": {"title": "Tasks", "text": "<p>Python</p>"}}},
+    "jobAd": {"sections": {
+        "jobDescription": {"title": "Tasks", "text": "<p>Python</p>"},
+        "videos": {"title": "Videos", "urls": []},
+    }},
 }
 SMART_URL = "https://api.smartrecruiters.com/v1/companies/acme/postings"
 

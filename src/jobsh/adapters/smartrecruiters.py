@@ -58,7 +58,7 @@ def _detail(posting: dict, *, url: str, timeout: float) -> dict[str, str | None]
         sections = job["jobAd"]["sections"]
         description = "\n\n".join(
             "\n".join(filter(None, (section.get("title"), section["text"])))
-            for section in sections.values()
+            for section in sections.values() if "text" in section
         )
         account = urlsplit(url).path.split("/")[-2]
         record = {
@@ -77,7 +77,7 @@ def _detail(posting: dict, *, url: str, timeout: float) -> dict[str, str | None]
         record["raw_record"] = json.dumps(job, ensure_ascii=False, sort_keys=True)
         return record
     except (KeyError, TypeError, AttributeError) as error:
-        raise ValueError("invalid SmartRecruiters posting") from error
+        raise ValueError(f"invalid SmartRecruiters posting {job_id}: {error}") from error
 
 
 def fetch_records(url: str, timeout: float) -> list[dict[str, str | None]]:
