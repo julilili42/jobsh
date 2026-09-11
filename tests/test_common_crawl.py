@@ -103,6 +103,20 @@ class CommonCrawlTest(unittest.TestCase):
             _read_json(COLLECTIONS_URL, 1)
         self.assertEqual(fetch.call_count, 3)
 
+    @patch("jobsh.discovery.time.sleep")
+    @patch("jobsh.discovery.fetch")
+    def test_transient_errors_retry_then_use_older_collection(self, fetch, sleep):
+        fetch.side_effect = [
+            b'[{"cdx-api":"new","to":"2026"},{"cdx-api":"old","to":"2025"}]',
+            HTTPStatusError(504, "timeout"), OSError("connection closed"),
+            HTTPStatusError(400, "bad request"), b'{"pages":1}',
+            b'{"url":"https://one.example"}\n',
+        ]
+        state = {}
+        self.assertEqual(list(records("example.com", 1, state)), [{"url": "https://one.example"}])
+        self.assertEqual(state["endpoint"], "old")
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
     @patch("jobsh.discovery.verify", return_value=None)
     @patch("jobsh.discovery.time.sleep")
     @patch("jobsh.discovery.fetch")

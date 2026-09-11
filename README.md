@@ -87,6 +87,9 @@ Run `jobsh discovery --provider NAME`; `sync` selects the adapter from each stor
 source. Database writes, job lifecycle and concurrency remain shared. Adapters
 must support concurrent calls.
 
+Complete JSON feeds can reuse `adapters.json_feed.normalize` with field paths
+and small callbacks for provider-specific values and completeness checks.
+
 ```bash
 uv run python -m unittest discover -s tests
 ```
