@@ -18,6 +18,7 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
             path = Path(directory) / "jobs.db"
             with closing(connect(path)) as database, database:
                 seed(database)
+                database.execute("UPDATE jobs SET description = '<p>Python &amp; SQL</p>' WHERE id = 2")
                 database.execute("UPDATE jobs SET closed_at = '2026-09-11' WHERE id = 2")
             params = StdioServerParameters(
                 command=sys.executable,
@@ -36,6 +37,7 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
                         page = result.structuredContent
                         ids.extend(job["id"] for job in page["jobs"])
                         self.assertTrue(all("description" not in job for job in page["jobs"]))
+                        self.assertTrue(all("snippet" in job for job in page["jobs"]))
                         cursor = page["next_cursor"]
                     self.assertEqual(ids, [i for i in range(1, len(SAMPLE) + 1) if i != 2])
                     result = await session.call_tool("search_jobs", {"location": "France"})
@@ -43,6 +45,7 @@ class ServerTest(unittest.IsolatedAsyncioTestCase):
                     result = await session.call_tool("get_job", {"id": 2})
                     self.assertEqual(result.structuredContent["closed_at"], "2026-09-11")
                     self.assertIn("description", result.structuredContent)
+                    self.assertEqual(result.structuredContent["description"], "Python & SQL")
                     self.assertIn("original_url", result.structuredContent)
                     for tool, args in (("search_jobs", {"limit": 101}),
                                        ("search_jobs", {"cursor": -1}),

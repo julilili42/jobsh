@@ -37,6 +37,36 @@ def seed(database):
 
 
 class SearchTest(unittest.TestCase):
+    def test_plain_text_and_query_excerpts_preserve_source(self):
+        from jobsh.text import plain_text
+
+        self.assertEqual(plain_text("<p>C<u>#</u> &amp; Python</p><ul><li>Remote<br>in Germany</li></ul>"),
+                         "C# & Python\nRemote\nin Germany")
+        self.assertEqual(plain_text("SQL < 3\nPython > 2"), "SQL < 3\nPython > 2")
+        self.assertIsNone(plain_text(None))
+        with closing(connect(":memory:")) as database:
+            seed(database)
+            html = ("<style>.hidden {color:red}</style><script>ignore()</script><p>"
+                    + "Company background. " * 80
+                    + "</p><p>First experience with <b>Python</b> and C#. Mobile work possible.</p>"
+                    + "<p>Benefits. " * 80)
+            database.execute("UPDATE jobs SET description = ? WHERE id = 2", (html,))
+            for query in ("Python", "C#"):
+                job, = search(database, query, title="Go Developer")["jobs"]
+                self.assertIn(query, job["snippet"])
+                self.assertIn("Mobile work possible", job["snippet"])
+                self.assertLessEqual(len(job["snippet"]), 320)
+                self.assertNotIn("<", job["snippet"])
+                self.assertNotIn("description", job)
+            detail = get_job(database, 2)["description"]
+            self.assertIn("Python and C#", detail)
+            self.assertNotIn("ignore()", detail)
+            self.assertNotIn("color:red", detail)
+            self.assertTrue(search(database, title="Go Developer")["jobs"][0]["snippet"].startswith("Company background"))
+            self.assertEqual(database.execute("SELECT description FROM jobs WHERE id = 2").fetchone()[0], html)
+            database.execute("UPDATE jobs SET description = NULL WHERE id = 2")
+            self.assertEqual(search(database, "Go")["jobs"][0]["snippet"], "")
+
     def test_composed_filters_technical_terms_and_pagination(self):
         with closing(connect(":memory:")) as database:
             seed(database)

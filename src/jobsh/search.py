@@ -1,6 +1,8 @@
 import re
 import sqlite3
 
+from .text import excerpt, plain_text
+
 SUMMARY = (
     "j.id, j.title, j.location_text, j.work_mode, j.source_category, "
     "j.original_url, j.published_at, j.last_seen_at, s.provider, s.provider_account"
@@ -57,11 +59,13 @@ def search(
     join = " JOIN jobs_fts ON jobs_fts.rowid = j.id" if full_text else ""
     key = "jobs_fts.rowid" if full_text else "j.id"
     rows = database.execute(
-        "SELECT " + SUMMARY + SOURCE_JOIN + join + " WHERE " + " AND ".join(conditions)
+        "SELECT " + SUMMARY + ", j.description" + SOURCE_JOIN + join + " WHERE " + " AND ".join(conditions)
         + f" AND {key} > ? ORDER BY {key} LIMIT ?",
         parameters + [cursor, limit + 1],
     )
     jobs = [dict(row) for row in rows]
+    for job in jobs[:limit]:
+        job["snippet"] = excerpt(job.pop("description"), query)
     return {"jobs": jobs[:limit], "next_cursor": jobs[limit - 1]["id"] if len(jobs) > limit else None}
 
 
@@ -75,4 +79,6 @@ def get_job(database: sqlite3.Connection, job_id: int) -> dict:
     ).fetchone()
     if row is None:
         raise ValueError(f"job {job_id} not found")
-    return dict(row)
+    job = dict(row)
+    job["description"] = plain_text(job["description"])
+    return job

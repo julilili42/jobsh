@@ -31,7 +31,8 @@ def serve(path: Path) -> None:
     ) -> dict[str, Any]:
         """Search titles/descriptions by AND keywords; empty query lists all open jobs.
 
-        Title/location are literal substring filters. Results are compact, ordered
+        Title/location are literal substring filters. Results include a short
+        plain-text snippet near a query term (or the description start), ordered
         by ID. Continue with next_cursor and unchanged filters until it is null.
         Limit: 1..100. Load full descriptions with get_job.
         """
@@ -42,7 +43,7 @@ def serve(path: Path) -> None:
 
     @server.tool(annotations=readonly)
     def get_job(id: int) -> dict[str, Any]:
-        """Read a full job by ID, with description, source URL and freshness/closure dates."""
+        """Read a full job by ID, with plain-text description, source URL and freshness/closure dates."""
         with closing(sqlite3.connect(uri, uri=True)) as database:
             database.row_factory = sqlite3.Row
             return read_job(database, id)

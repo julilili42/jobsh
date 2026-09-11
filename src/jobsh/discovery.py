@@ -73,7 +73,7 @@ def candidate_hosts(
 def verify(source: tuple[str, str], adapter: Adapter, timeout: float):
     account, url = source
     try:
-        adapter.fetch_records(url, timeout)
+        (adapter.verify or adapter.fetch_records)(url, timeout)
     except (OSError, ValueError):
         return None
     return account, url, datetime.now(timezone.utc).isoformat()
