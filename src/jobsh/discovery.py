@@ -1,11 +1,10 @@
 import json
 import sys
 import time
-from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import partial
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlencode
 
 from .http import HTTPStatusError, fetch
 from .adapters import ADAPTERS, Adapter
@@ -63,26 +62,6 @@ def records(domain: str, timeout: float, state: dict | None = None):
         state.update(page=page + 1, offset=0)
         if page + 1 < pages:
             time.sleep(1)
-
-
-def candidate_hosts(
-    records: Iterable[dict[str, str]], domain: str, limit: int = 0,
-    known_hosts: set[str] | None = None,
-) -> list[str]:
-    """Collect up to limit distinct hosts in input order, then sort the selection."""
-    if limit < 0:
-        raise ValueError("limit must be >= 0")
-    domain = domain.lower()
-    hosts = set()
-    known_hosts = known_hosts or set()
-    for record in records:
-        host = (urlsplit(record.get("url", "")).hostname or "").lower()
-        account, separator, parent = host.partition(".")
-        if account and separator and parent == domain and host not in known_hosts:
-            hosts.add(host)
-            if limit and len(hosts) >= limit:
-                break
-    return sorted(hosts)
 
 
 def verify(source: tuple[str, str], adapter: Adapter, timeout: float):

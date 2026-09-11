@@ -14,26 +14,23 @@ def source(url: str) -> tuple[str, str] | None:
     return None
 
 
-def _include(job: dict) -> bool:
+def _record(job: dict) -> dict | None:
     if type(job["isListed"]) is not bool:
         raise ValueError("invalid Ashby listing visibility")
-    return job["isListed"]
-
-
-def _prepare(job: dict, record: dict) -> None:
-    record["locations"] = [record["locations"]] + [item["location"] for item in job.get("secondaryLocations", [])]
+    if not job["isListed"]:
+        return None
     mode = {"OnSite": "onsite", "Remote": "remote", "Hybrid": "hybrid"}.get(job.get("workplaceType"))
-    record["work_mode"] = mode or ("remote" if job.get("isRemote") is True else "unknown")
+    return {
+        "external_id": job["id"], "title": job["title"], "description": job["descriptionHtml"],
+        "locations": [job["location"]] + [item["location"] for item in job.get("secondaryLocations", [])],
+        "work_mode": mode or ("remote" if job.get("isRemote") is True else "unknown"),
+        "employment_type": job["employmentType"], "source_category": job["department"],
+        "original_url": job["jobUrl"], "published_at": job["publishedAt"],
+    }
 
 
 def normalize_feed(data: bytes) -> list[dict[str, str | None]]:
-    return normalize(data, name="Ashby", jobs_path=("jobs",), include=_include, prepare=_prepare,
-                     valid_id=lambda job_id: isinstance(job_id, str) and bool(job_id),
-                     fields={"external_id": ("id",), "title": ("title",),
-                             "description": ("descriptionHtml",), "locations": ("location",),
-                             "work_mode": None, "employment_type": ("employmentType",),
-                             "source_category": ("department",), "original_url": ("jobUrl",),
-                             "published_at": ("publishedAt",)})
+    return normalize(data, name="Ashby", record=_record)
 
 
 def fetch_records(url: str, timeout: float) -> list[dict[str, str | None]]:

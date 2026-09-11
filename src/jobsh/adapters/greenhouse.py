@@ -19,25 +19,29 @@ def source(url: str) -> tuple[str, str] | None:
     return account, f"https://boards-api.greenhouse.io/v1/boards/{account}/jobs?content=true"
 
 
-def _prepare(job: dict, record: dict) -> None:
-    location = record["locations"]
-    record["description"] = unescape(record["description"])
-    record["locations"] = [location] if location else []
-    record["source_category"] = "; ".join(item["name"] for item in job.get("departments", [])) or None
+def _record(job: dict) -> dict:
+    location = job["location"]["name"]
     # ponytail: location-only heuristic; structured work-mode metadata when available.
-    record["work_mode"] = "hybrid" if re.search(r"\bhybrid\b", location, re.I) else (
+    mode = "hybrid" if re.search(r"\bhybrid\b", location, re.I) else (
         "remote" if re.search(r"\bremote\b", location, re.I) else "unknown"
     )
+    return {
+        "external_id": job["id"], "title": job["title"], "description": unescape(job["content"]),
+        "locations": [location] if location else [], "work_mode": mode,
+        "source_category": "; ".join(item["name"] for item in job.get("departments", [])) or None,
+        "employment_type": None, "original_url": job["absolute_url"], "published_at": None,
+    }
+
+
+def _jobs(payload: dict) -> list:
+    jobs = payload["jobs"]
+    if payload.get("meta", {}).get("total", len(jobs)) != len(jobs):
+        raise ValueError("incomplete Greenhouse feed")
+    return jobs
 
 
 def normalize_feed(data: bytes) -> list[dict[str, str | None]]:
-    return normalize(data, name="Greenhouse", jobs_path=("jobs",), prepare=_prepare,
-                     valid_id=lambda job_id: type(job_id) is int and job_id > 0,
-                     complete=lambda payload, jobs: payload.get("meta", {}).get("total", len(jobs)) == len(jobs),
-                     fields={"external_id": ("id",), "title": ("title",),
-                             "description": ("content",), "locations": ("location", "name"), "work_mode": None,
-                             "employment_type": None, "source_category": None,
-                             "original_url": ("absolute_url",), "published_at": None})
+    return normalize(data, name="Greenhouse", record=_record, jobs=_jobs, id_type=int)
 
 
 def fetch_records(url: str, timeout: float) -> list[dict[str, str | None]]:

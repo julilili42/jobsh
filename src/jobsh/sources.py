@@ -52,10 +52,10 @@ def _fetch_source(source: sqlite3.Row, timeout: float):
     source_id, provider, url = source
     started_at = datetime.now(timezone.utc).isoformat()
     started = time.monotonic()
-    adapter = ADAPTERS.get(provider)
-    if adapter is None:
-        return source_id, started_at, started, [], ValueError(f"unknown provider: {provider}")
     try:
+        adapter = ADAPTERS.get(provider)
+        if adapter is None:
+            raise ValueError(f"unknown provider: {provider}")
         return source_id, started_at, started, adapter.fetch_records(url, timeout), None
     except (OSError, ValueError) as error:
         return source_id, started_at, started, [], error
@@ -70,11 +70,9 @@ def _save_source(
     error: Exception | None,
 ) -> bool:
     finished_at = datetime.now(timezone.utc).isoformat()
-    if error is not None:
-        with database:
-            _record_sync(database, source_id, started_at, finished_at, started, error=error)
-        return False
     try:
+        if error is not None:
+            raise error
         with database:
             database.execute(
                 "UPDATE jobs SET missing_imports = missing_imports + 1 "
@@ -90,7 +88,7 @@ def _save_source(
                 "UPDATE sources SET last_success_at = ? WHERE id = ?", (finished_at, source_id),
             )
             _record_sync(database, source_id, started_at, finished_at, started, counts)
-    except (KeyError, ValueError, sqlite3.Error) as error:
+    except (KeyError, ValueError, OSError, sqlite3.Error) as error:
         finished_at = datetime.now(timezone.utc).isoformat()
         with database:
             _record_sync(database, source_id, started_at, finished_at, started, error=error)

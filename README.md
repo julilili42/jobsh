@@ -87,8 +87,10 @@ Run `jobsh discovery --provider NAME`; `sync` selects the adapter from each stor
 source. Database writes, job lifecycle and concurrency remain shared. Adapters
 must support concurrent calls.
 
-Complete JSON feeds can reuse `adapters.json_feed.normalize` with field paths
-and small callbacks for provider-specific values and completeness checks.
+JSON feeds reuse `adapters.json_feed.normalize` for validation, duplicate checks,
+hashing and serialization. Each provider maps a job with a plain Python function;
+return `None` to exclude an unlisted job. Feed completeness and pagination stay
+with the provider (see `adapters/greenhouse.py` and `adapters/lever.py`).
 
 ```bash
 uv run python -m unittest discover -s tests

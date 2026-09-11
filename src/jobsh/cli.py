@@ -4,8 +4,8 @@ import sqlite3
 import sys
 from contextlib import closing
 from pathlib import Path
-from .adapters import ADAPTERS
 
+from .adapters import ADAPTERS
 from .db import connect
 from .discovery import discover
 from .search import get_job, search
@@ -39,7 +39,7 @@ def _discovery(args: argparse.Namespace) -> None:
 
 
 def _sync(args: argparse.Namespace) -> None:
-    with closing(connect(args.db)) as database, database:
+    with closing(connect(args.db)) as database:
         succeeded, failed = sync(database, args.timeout, args.workers)
     print(f"synced {succeeded} sources; {failed} failed", file=sys.stderr)
     if failed:
@@ -80,19 +80,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jobsh")
     parser.add_argument("--db", type=Path, default=Path("jobsh.db"))
     commands = parser.add_subparsers(dest="command", required=True)
-    command = commands.add_parser(
-        "discovery", help="find and register public job feeds"
-    )
-    command.set_defaults(run=_discovery)
-    command.add_argument("--provider", choices=ADAPTERS, default="personio")
-    command.add_argument("--limit", type=int, default=0, help="maximum hosts to verify")
-    command.add_argument("--workers", type=int, default=32)
-    command.add_argument("--timeout", type=float, default=15)
-
-    command = commands.add_parser("sync", help="import all registered feeds")
-    command.set_defaults(run=_sync)
-    command.add_argument("--workers", type=int, default=32)
-    command.add_argument("--timeout", type=float, default=15)
+    for name, run, help_text in (
+        ("discovery", _discovery, "find and register public job feeds"),
+        ("sync", _sync, "import all registered feeds"),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.set_defaults(run=run)
+        command.add_argument("--workers", type=int, default=32)
+        command.add_argument("--timeout", type=float, default=15)
+        if name == "discovery":
+            command.add_argument("--provider", choices=ADAPTERS, default="personio")
+            command.add_argument("--limit", type=int, default=0, help="maximum hosts to verify")
 
     command = commands.add_parser("search", help="search all open jobs")
     command.set_defaults(run=_search)
@@ -106,9 +104,7 @@ def _build_parser() -> argparse.ArgumentParser:
     command.add_argument("--cursor", type=int, default=0, help="continue after this job ID")
     command.add_argument("--json", action="store_true")
 
-    command = commands.add_parser(
-        "show", help="show the full job, including closed jobs"
-    )
+    command = commands.add_parser("show", help="show the full job, including closed jobs")
     command.set_defaults(run=_show)
     command.add_argument("id", type=int)
     command.add_argument("--json", action="store_true")
