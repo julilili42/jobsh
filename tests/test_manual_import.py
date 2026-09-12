@@ -170,7 +170,7 @@ class ManualImportTest(unittest.TestCase):
         with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
             self.assertEqual(sync(database, 3, workers=3), (3, 0))
             self.assertEqual(sync(database, 3, workers=3), (0, 0))
-        self.assertEqual((calls, peak), (3, 2))
+        self.assertEqual((calls, peak), (3, 3))
 
 
 if __name__ == "__main__":

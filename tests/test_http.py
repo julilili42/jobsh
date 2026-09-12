@@ -1,4 +1,6 @@
 import unittest
+from contextlib import contextmanager
+from threading import BoundedSemaphore, Event, Lock, Thread
 from unittest.mock import patch
 
 import httpx
@@ -7,6 +9,41 @@ from jobsh.http import _retry_at, fetch
 
 
 class HttpTest(unittest.TestCase):
+    @patch("jobsh.http.CLIENT.stream")
+    def test_request_limits_are_global_and_per_origin(self, stream):
+        active: dict[str, int] = {}
+        peak: dict[str, int] = {}
+        lock, full, release = Lock(), Event(), Event()
+
+        @contextmanager
+        def request(_, url, **__):
+            origin = url.split("/")[2]
+            with lock:
+                active[origin] = active.get(origin, 0) + 1
+                peak[origin] = max(peak.get(origin, 0), active[origin])
+                if sum(active.values()) == 3:
+                    full.set()
+            try:
+                release.wait(1)
+                yield httpx.Response(200, content=b"ok", request=httpx.Request("GET", url))
+            finally:
+                with lock:
+                    active[origin] -= 1
+
+        stream.side_effect = request
+        with patch("jobsh.http.REQUESTS", BoundedSemaphore(3)), \
+                patch("jobsh.http.ORIGIN_REQUESTS", 2), patch("jobsh.http._origin_requests", {}):
+            threads = [Thread(target=fetch, args=(f"https://{origin}/feed", 3))
+                       for origin in ("one.example", "one.example", "one.example", "two.example")]
+            for thread in threads:
+                thread.start()
+            self.assertTrue(full.wait(1))
+            release.set()
+            for thread in threads:
+                thread.join(1)
+                self.assertFalse(thread.is_alive())
+        self.assertEqual(peak, {"one.example": 2, "two.example": 1})
+
     @patch("jobsh.http.time.time", return_value=100)
     @patch("jobsh.http.CLIENT.stream")
     def test_rate_limits_are_host_specific_and_handle_header_edge_cases(self, stream, clock):

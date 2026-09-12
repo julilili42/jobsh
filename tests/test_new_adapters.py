@@ -67,8 +67,10 @@ class NewAdaptersTest(unittest.TestCase):
 
     def test_smartrecruiters_pagination_and_parallel_details(self):
         barrier = Barrier(2)
+        calls = []
 
         def fetch(url, timeout):
+            calls.append(url)
             if "offset=0" in url:
                 return encoded({"offset": 0, "totalFound": 3, "content": [{"id": "1"}, {"id": "2"}]})
             if "offset=2" in url:
@@ -85,6 +87,13 @@ class NewAdaptersTest(unittest.TestCase):
         self.assertEqual(records[0]["work_mode"], "remote")
         self.assertEqual(records[0]["location_text"], "Berlin, de")
         self.assertEqual(records[2]["published_at"], "2026-09-11")
+        self.assertLess(max(i for i, url in enumerate(calls) if "offset=" in url),
+                        min(i for i, url in enumerate(calls) if "offset=" not in url))
+        nullable = SMART | {"department": None, "typeOfEmployment": None}
+        with patch("jobsh.adapters.smartrecruiters.fetch", side_effect=[
+            encoded({"offset": 0, "totalFound": 1, "content": [{"id": "1"}]}), encoded(nullable),
+        ]):
+            self.assertEqual(smartrecruiters.fetch_records(SMART_URL, 3)[0]["source_category"], None)
         for page in ({}, {"offset": 0, "totalFound": 1, "content": []},
                      {"offset": 0, "totalFound": 1, "content": [{"id": "../x"}]},
                      {"offset": 0, "totalFound": 2, "content": [{"id": "1"}, {"id": "1"}]}):

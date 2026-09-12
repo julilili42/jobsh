@@ -8,8 +8,9 @@ from urllib.parse import urlencode, urlsplit
 
 from ..http import fetch
 
-# Shared across source workers: at most eight simultaneous detail requests.
+# Shared across source workers. Small submissions leave threads for other boards.
 DETAILS = ThreadPoolExecutor(max_workers=8, thread_name_prefix="smartrecruiters")
+DETAIL_BATCH = 4
 
 
 def source(url: str) -> tuple[str, str] | None:
@@ -56,6 +57,12 @@ def _detail(posting: dict, *, url: str, timeout: float) -> dict[str, str | None]
             raise ValueError("invalid SmartRecruiters location")
         locations = list(filter(None, locations))
         sections = job["jobAd"]["sections"]
+        employment = job.get("typeOfEmployment")
+        department = job.get("department")
+        if employment is not None and not isinstance(employment, dict):
+            raise ValueError("invalid SmartRecruiters employment type")
+        if department is not None and not isinstance(department, dict):
+            raise ValueError("invalid SmartRecruiters department")
         description = "\n\n".join(
             "\n".join(filter(None, (section.get("title"), section["text"])))
             for section in sections.values() if "text" in section
@@ -68,8 +75,8 @@ def _detail(posting: dict, *, url: str, timeout: float) -> dict[str, str | None]
             "work_mode": "hybrid" if location.get("hybrid") is True else (
                 "remote" if location.get("remote") is True else "unknown"
             ),
-            "employment_type": job.get("typeOfEmployment", {}).get("label"),
-            "source_category": job.get("department", {}).get("label"),
+            "employment_type": (employment or {}).get("label"),
+            "source_category": (department or {}).get("label"),
             "original_url": f"https://jobs.smartrecruiters.com/{account}/{job_id}",
             "published_at": job.get("releasedDate") or posting.get("releasedDate"),
         }
@@ -80,8 +87,8 @@ def _detail(posting: dict, *, url: str, timeout: float) -> dict[str, str | None]
         raise ValueError(f"invalid SmartRecruiters posting {job_id}: {error}") from error
 
 
-def fetch_records(url: str, timeout: float) -> list[dict[str, str | None]]:
-    records, ids = [], set()
+def postings(url: str, timeout: float) -> list[dict]:
+    result, ids = [], set()
     offset, total = 0, None
     while True:
         page = _page(url, timeout, offset)
@@ -92,8 +99,15 @@ def fetch_records(url: str, timeout: float) -> list[dict[str, str | None]]:
         if ids.intersection(batch) or len(set(batch)) != len(batch) or offset + len(batch) > total:
             raise ValueError("duplicate or inconsistent SmartRecruiters postings")
         ids.update(batch)
-        for start in range(0, len(batch), 8):
-            records.extend(DETAILS.map(partial(_detail, url=url, timeout=timeout), page["content"][start:start + 8]))
+        result.extend(page["content"])
         offset += len(batch)
         if offset == total:
-            return records
+            return result
+
+
+def fetch_records(url: str, timeout: float) -> list[dict[str, str | None]]:
+    postings_ = postings(url, timeout)
+    records = []
+    for start in range(0, len(postings_), DETAIL_BATCH):
+        records.extend(DETAILS.map(partial(_detail, url=url, timeout=timeout), postings_[start:start + DETAIL_BATCH]))
+    return records

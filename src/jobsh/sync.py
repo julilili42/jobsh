@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from .adapters import ADAPTERS
 from .db import save_source
 
-PER_HOST_WORKERS = 2
+PER_HOST_WORKERS = 8
 
 
 def _fetch_source(source: sqlite3.Row, timeout: float):
