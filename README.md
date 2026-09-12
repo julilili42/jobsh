@@ -20,12 +20,19 @@ database. Discovery and sync import public jobs from Personio, Greenhouse,
 Ashby, SmartRecruiters, d.vinci and Lever.
 Search includes all open jobs, regardless of occupation or country.
 
-Ashby imports all listed jobs, including secondary locations and structured work
-modes, in one request per board. Unlisted jobs are excluded. SmartRecruiters
-paginates postings and downloads full descriptions with at most eight concurrent
-detail requests across all source workers. Discovery only checks its first list
-page. A failed detail request or inconsistent pagination fails the source import
-without marking stored jobs as missing.
+## Architecture
+
+Common Crawl → verified feeds → adapters → SQLite → CLI / MCP.
+
+- `discovery.py` finds feeds and resumes from the saved index position.
+- `adapters/` validates complete feeds and maps provider data to job records.
+- `sync.py` downloads feeds with bounded workers and saves completed sources immediately.
+- `db.py` initializes SQLite and stores sources and jobs; `search.py` queries them.
+
+Each source import commits jobs, closure counters and its run report together.
+Failed imports preserve existing jobs. Two successful imports without a job close
+it; a returning job reopens with its original ID. Unchanged jobs avoid index writes.
+HTTP requests have time/size limits and respect `Retry-After` cooldowns.
 
 ## MCP
 
@@ -77,7 +84,7 @@ Register an `Adapter` in `src/jobsh/adapters/__init__.py` with:
 - `domain`: the Common Crawl discovery domain.
 - `source(url)`: extract `(provider_account, feed_url)`, or return `None`.
 - `fetch_records(url, timeout)`: validate and normalize the complete feed into job
-  dictionaries (see `adapters/personio.py` and `jobs.JOB_FIELDS`). Raise `ValueError`
+  dictionaries (see `adapters/personio.py` and `db.JOB_FIELDS`). Raise `ValueError`
   for invalid or incomplete feeds, and `OSError` for network errors. Only a
   successfully validated empty feed may return `[]`.
 - Optional `verify(url, timeout)`: a lightweight discovery check; otherwise

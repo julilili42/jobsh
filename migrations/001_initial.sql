@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS companies (
     domain TEXT UNIQUE
 );
 
+CREATE TABLE IF NOT EXISTS discovery_state (domain TEXT PRIMARY KEY, state TEXT NOT NULL);
+
 CREATE TABLE IF NOT EXISTS sources (
     id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id),

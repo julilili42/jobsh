@@ -7,8 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jobsh.cli import _build_parser, main
-from jobsh.db import connect
-from jobsh.sources import register_source
+from jobsh.db import connect, register_source
 
 FEED = (Path(__file__).parents[1] / "testdata/personio.xml").read_bytes()
 

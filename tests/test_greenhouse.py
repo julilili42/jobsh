@@ -2,9 +2,9 @@ import json
 import unittest
 from unittest.mock import patch
 
-from jobsh.db import connect
+from jobsh.db import connect, register_source
 from jobsh.adapters.greenhouse import normalize_feed, source
-from jobsh.sources import register_source, sync
+from jobsh.sync import sync
 
 JOB = {"id": 42, "title": "Software Engineer", "absolute_url": "https://example.org/jobs/42",
        "location": {"name": "Remote, Germany"}, "content": "&lt;p&gt;Python&lt;/p&gt;",

@@ -9,11 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jobsh.cli import main
-from jobsh.db import MIGRATION, connect
-from jobsh.jobs import save_jobs
+from jobsh.db import MIGRATION, connect, register_source, save_jobs
 from jobsh.adapters.personio import normalize_feed
 from jobsh.search import get_job, search
-from jobsh.sources import register_source
 
 SAMPLE = json.loads((Path(__file__).parents[1] / "testdata/search.json").read_text())
 URL = "https://example.jobs.personio.de/xml"

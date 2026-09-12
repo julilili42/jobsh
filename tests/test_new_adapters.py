@@ -5,9 +5,9 @@ from threading import Barrier
 from unittest.mock import patch
 
 from jobsh.adapters import ADAPTERS, ashby, smartrecruiters
-from jobsh.db import connect
+from jobsh.db import connect, register_source
 from jobsh.discovery import discover
-from jobsh.sources import register_source, sync
+from jobsh.sync import sync
 
 
 def encoded(value):

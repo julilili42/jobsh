@@ -4,9 +4,9 @@ from unittest.mock import Mock
 from pathlib import Path
 from unittest.mock import patch
 
-from jobsh.db import connect
+from jobsh.db import connect, register_source
 from jobsh.http import fetch as http_fetch
-from jobsh.sources import register_source, sync
+from jobsh.sync import sync
 import httpx
 
 FEED_URL = "https://example.jobs.personio.de/xml?language=de"

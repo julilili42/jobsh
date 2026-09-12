@@ -5,10 +5,9 @@ from types import SimpleNamespace
 from threading import Barrier, Event
 from unittest.mock import Mock, patch
 
-from jobsh.db import connect
-from jobsh.jobs import save_jobs
+from jobsh.db import connect, register_source, save_jobs
 from jobsh.adapters.personio import normalize_feed
-from jobsh.sources import register_source, sync
+from jobsh.sync import sync
 
 FIXTURE = Path(__file__).parents[1] / "testdata" / "personio.xml"
 FEED_URL = "https://example.jobs.personio.de/xml?language=de"
@@ -34,7 +33,7 @@ class ManualImportTest(unittest.TestCase):
         with database:
             for account in ("slow", "fast"):
                 register_source(database, "example", account, f"https://{account}.example", "manual")
-        with patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}):
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}):
             self.assertEqual(sync(database, 3, workers=2), (2, 0))
 
     def test_sync_fetches_sources_concurrently(self) -> None:
@@ -46,7 +45,7 @@ class ManualImportTest(unittest.TestCase):
             barrier.wait(timeout=1)
             return []
 
-        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
+        with database, patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
             for account in ("one", "two"):
                 register_source(database, "example", account, f"https://{account}.example", "manual")
             self.assertEqual(sync(database, 3, workers=2), (2, 0))
@@ -55,7 +54,7 @@ class ManualImportTest(unittest.TestCase):
         database = connect(":memory:")
         self.addCleanup(database.close)
         adapter = Mock(return_value=[])
-        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
+        with database, patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
             register_source(database, "example", "account", "https://example.test/jobs", "manual")
             self.assertEqual(sync(database, 3), (1, 0))
         adapter.assert_called_once_with("https://example.test/jobs", 3)

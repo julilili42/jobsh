@@ -6,10 +6,10 @@ from contextlib import closing
 from pathlib import Path
 
 from .adapters import ADAPTERS
-from .db import connect
+from .db import connect, register_source
 from .discovery import discover
 from .search import get_job, search
-from .sources import register_source, sync
+from .sync import sync
 
 
 def _discovery(args: argparse.Namespace) -> None:
@@ -20,9 +20,6 @@ def _discovery(args: argparse.Namespace) -> None:
             row[0]
             for row in database.execute("SELECT provider_account FROM sources WHERE provider = ?", (provider,))
         }
-        database.execute(
-            "CREATE TABLE IF NOT EXISTS discovery_state (domain TEXT PRIMARY KEY, state TEXT NOT NULL)"
-        )
         saved = database.execute(
             "SELECT state FROM discovery_state WHERE domain = ?", (domain,)
         ).fetchone()
