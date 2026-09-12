@@ -4,15 +4,18 @@ Local job aggregator with full-text search and a read-only MCP server.
 
 ```bash
 uv sync
-uv run jobsh discovery --provider personio --limit 100
+uv run jobsh discovery --provider personio --limit 100 --collections 2
 uv run jobsh discovery --provider greenhouse --limit 100
 uv run jobsh discovery --provider ashby --limit 100
 uv run jobsh discovery --provider smartrecruiters --limit 100
 uv run jobsh discovery --provider dvinci --limit 100
 uv run jobsh discovery --provider lever --limit 100
+uv run jobsh source add jsonld https://example.com/jobs/42
 uv run jobsh sync
 uv run jobsh search python --location Berlin --json
 uv run jobsh show 42 --json
+uv run jobsh stats --json
+uv run jobsh stats --errors
 ```
 
 Data is stored in `jobsh.db`. Use `--db PATH` before the command to select another
@@ -33,6 +36,8 @@ Each source import commits jobs, closure counters and its run report together.
 Failed imports preserve existing jobs. Two successful imports without a job close
 it; a returning job reopens with its original ID. Unchanged jobs avoid index writes.
 HTTP requests have time/size limits and respect `Retry-After` cooldowns.
+Failed discovery candidates are retried after one day. Changed feeds run again
+after one hour, unchanged feeds after six; import failures use exponential backoff.
 
 ## MCP
 
@@ -81,7 +86,7 @@ Existing jobs are preserved; legacy classification columns are ignored.
 
 Register an `Adapter` in `src/jobsh/adapters/__init__.py` with:
 
-- `domain`: the Common Crawl discovery domain.
+- `domains`: Common Crawl discovery domains; use `()` for manual-only adapters.
 - `source(url)`: extract `(provider_account, feed_url)`, or return `None`.
 - `fetch_records(url, timeout)`: validate and normalize the complete feed into job
   dictionaries (see `adapters/personio.py` and `db.JOB_FIELDS`). Raise `ValueError`

@@ -47,6 +47,7 @@ class GreenhouseTest(unittest.TestCase):
         fetch.return_value = feed([JOB])
         self.assertEqual(sync(database, 3), (1, 0))
         self.assertEqual(database.execute("SELECT title FROM jobs").fetchone()[0], JOB["title"])
+        database.execute("UPDATE sources SET next_sync_at = NULL")
         fetch.return_value = b'{}'
         self.assertEqual(sync(database, 3), (0, 1))
         self.assertEqual(database.execute("SELECT missing_imports FROM jobs").fetchone()[0], 0)

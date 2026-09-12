@@ -59,18 +59,59 @@ class CliTest(unittest.TestCase):
                         ).fetchall(), [(account,) for account in expected])
                     self.assertEqual(fetch.call_count, calls)
 
+    @patch("jobsh.adapters.personio.fetch", side_effect=[OSError("offline"), FEED])
+    @patch("jobsh.discovery.records", side_effect=[
+        [{"url": "https://alpha.jobs.personio.de/job/1"}], [], [], [],
+    ])
+    def test_discovery_retries_saved_candidates(self, records, fetch):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.db"
+            args = ["jobsh", "--db", str(path), "discovery", "--workers", "1"]
+            with patch("sys.argv", args), redirect_stderr(io.StringIO()):
+                main()
+            with closing(sqlite3.connect(path)) as database:
+                self.assertEqual(database.execute(
+                    "SELECT account, error FROM discovery_candidates"
+                ).fetchone(), ("alpha", "offline"))
+                database.execute("UPDATE discovery_candidates SET retry_at = ''")
+                database.commit()
+            with patch("sys.argv", args), redirect_stderr(io.StringIO()):
+                main()
+            with closing(sqlite3.connect(path)) as database:
+                self.assertEqual(database.execute(
+                    "SELECT provider_account FROM sources"
+                ).fetchall(), [("alpha",)])
+                self.assertEqual(database.execute(
+                    "SELECT COUNT(*) FROM discovery_candidates"
+                ).fetchone()[0], 0)
+
     def test_parser_reads_discovery_and_sync_options(self) -> None:
         discovery = _build_parser().parse_args(
-            ["--db", "custom.db", "discovery", "--limit", "5", "--workers", "2", "--timeout", "3"]
+            ["--db", "custom.db", "discovery", "--limit", "5", "--workers", "2", "--timeout", "3", "--collections", "2"]
         )
         self.assertEqual(discovery.command, "discovery")
         self.assertEqual(discovery.db, Path("custom.db"))
-        self.assertEqual((discovery.limit, discovery.workers, discovery.timeout), (5, 2, 3))
+        self.assertEqual((discovery.limit, discovery.workers, discovery.timeout, discovery.collections), (5, 2, 3, 2))
 
         sync = _build_parser().parse_args(["sync", "--timeout", "4"])
         self.assertEqual(sync.command, "sync")
         self.assertEqual(sync.db, Path("jobsh.db"))
         self.assertEqual((sync.workers, sync.timeout), (32, 4))
+
+    def test_source_add_derives_and_registers_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.db"
+            with patch("sys.argv", [
+                "jobsh", "--db", str(path), "source", "add", "personio",
+                "https://acme.jobs.personio.de/job/1",
+            ]), redirect_stderr(io.StringIO()):
+                main()
+            with closing(sqlite3.connect(path)) as database:
+                self.assertEqual(database.execute(
+                    "SELECT provider, provider_account, url, discovery FROM sources"
+                ).fetchone(), (
+                    "personio", "acme", "https://acme.jobs.personio.de/xml?language=de", "manual",
+                ))
 
 
 if __name__ == "__main__":

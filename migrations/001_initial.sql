@@ -6,6 +6,19 @@ CREATE TABLE IF NOT EXISTS companies (
 
 CREATE TABLE IF NOT EXISTS discovery_state (domain TEXT PRIMARY KEY, state TEXT NOT NULL);
 
+CREATE TABLE IF NOT EXISTS discovery_candidates (
+    provider TEXT NOT NULL,
+    account TEXT NOT NULL,
+    url TEXT NOT NULL,
+    discovered_at TEXT NOT NULL,
+    retry_at TEXT,
+    error TEXT,
+    PRIMARY KEY (provider, account)
+);
+
+CREATE INDEX IF NOT EXISTS discovery_candidates_due
+ON discovery_candidates(provider, retry_at, discovered_at);
+
 CREATE TABLE IF NOT EXISTS sources (
     id INTEGER PRIMARY KEY,
     company_id INTEGER NOT NULL REFERENCES companies(id),
@@ -15,6 +28,8 @@ CREATE TABLE IF NOT EXISTS sources (
     discovery TEXT NOT NULL,
     discovered_at TEXT,
     last_success_at TEXT,
+    next_sync_at TEXT,
+    failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
     UNIQUE (provider, provider_account)
 );
 

@@ -1,6 +1,6 @@
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MIGRATION = Path(__file__).parents[2] / "migrations" / "001_initial.sql"
@@ -25,13 +25,21 @@ def connect(path: str | Path) -> sqlite3.Connection:
     database.executescript(MIGRATION.read_text())
     with database:
         database.execute("BEGIN IMMEDIATE")
-        columns = {row["name"] for row in database.execute("PRAGMA table_info(jobs)")}
-        for name, definition in (
-            ("missing_imports", "INTEGER NOT NULL DEFAULT 0 CHECK (missing_imports >= 0)"),
-            ("source_category", "TEXT"),
-        ):
-            if name not in columns:
-                database.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
+        for table, additions in {
+            "jobs": (
+                ("missing_imports", "INTEGER NOT NULL DEFAULT 0 CHECK (missing_imports >= 0)"),
+                ("source_category", "TEXT"),
+            ),
+            "sources": (
+                ("next_sync_at", "TEXT"),
+                ("failure_count", "INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0)"),
+            ),
+        }.items():
+            columns = {row["name"] for row in database.execute(f"PRAGMA table_info({table})")}
+            for name, definition in additions:
+                if name not in columns:
+                    database.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        database.execute("CREATE INDEX IF NOT EXISTS sources_due ON sources(next_sync_at)")
     if not database.execute("SELECT 1 FROM sqlite_master WHERE name = 'jobs_fts'").fetchone():
         database.executescript(
             "BEGIN IMMEDIATE;\n" + MIGRATION.with_name("002_search.sql").read_text() + "\nCOMMIT;"
@@ -49,10 +57,55 @@ def register_source(
             (company_id, provider, provider_account, url, discovery, discovered_at)
         VALUES ((SELECT id FROM companies WHERE name = ?), ?, ?, ?, ?, ?)
         ON CONFLICT (provider, provider_account) DO UPDATE SET
+            next_sync_at = CASE WHEN sources.url <> excluded.url THEN NULL ELSE sources.next_sync_at END,
+            failure_count = CASE WHEN sources.url <> excluded.url THEN 0 ELSE sources.failure_count END,
             url = excluded.url,
             discovery = excluded.discovery,
             discovered_at = COALESCE(excluded.discovered_at, sources.discovered_at)""",
         (account, provider, account, url, discovery, discovered_at),
+    )
+    database.execute(
+        "DELETE FROM discovery_candidates WHERE provider = ? AND account = ?",
+        (provider, account),
+    )
+
+
+def queue_candidates(
+    database: sqlite3.Connection, provider: str, candidates: list[tuple[str, str]], limit: int,
+) -> list[tuple[str, str]]:
+    now = datetime.now(timezone.utc).isoformat()
+    database.executemany(
+        """INSERT INTO discovery_candidates (provider, account, url, discovered_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (provider, account) DO UPDATE SET
+            retry_at = CASE WHEN url <> excluded.url THEN NULL ELSE retry_at END,
+            error = CASE WHEN url <> excluded.url THEN NULL ELSE error END,
+            url = excluded.url""",
+        ((provider, account, url, now) for account, url in candidates),
+    )
+    rows = database.execute(
+        """SELECT account, url FROM discovery_candidates AS candidate
+        WHERE provider = ? AND (retry_at IS NULL OR retry_at <= ?)
+          AND NOT EXISTS (
+              SELECT 1 FROM sources
+              WHERE provider = candidate.provider AND provider_account = candidate.account
+          )
+        ORDER BY retry_at IS NOT NULL, discovered_at, account
+        LIMIT ?""",
+        (provider, now, limit or -1),
+    )
+    return [(row["account"], row["url"]) for row in rows]
+
+
+def fail_candidate(
+    database: sqlite3.Connection, provider: str, account: str, error: Exception,
+) -> None:
+    retry_at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    database.execute(
+        """UPDATE discovery_candidates
+        SET retry_at = ?, error = ?
+        WHERE provider = ? AND account = ?""",
+        (retry_at, str(error), provider, account),
     )
 
 
@@ -110,7 +163,8 @@ def save_source(
     records: list[dict[str, str | None]],
     error: Exception | None,
 ) -> bool:
-    finished_at = datetime.now(timezone.utc).isoformat()
+    finished = datetime.now(timezone.utc)
+    finished_at = finished.isoformat()
     try:
         if error is not None:
             raise error
@@ -125,13 +179,24 @@ def save_source(
                 "WHERE source_id = ? AND missing_imports >= 2 AND closed_at IS NULL",
                 (finished_at, source_id),
             )
+            interval = timedelta(hours=1 if counts[0] or counts[1] else 6)
             database.execute(
-                "UPDATE sources SET last_success_at = ? WHERE id = ?", (finished_at, source_id),
+                "UPDATE sources SET last_success_at = ?, next_sync_at = ?, failure_count = 0 WHERE id = ?",
+                (finished_at, (finished + interval).isoformat(), source_id),
             )
             _record_sync(database, source_id, started_at, finished_at, started, counts)
     except (KeyError, ValueError, OSError, sqlite3.Error) as error:
-        finished_at = datetime.now(timezone.utc).isoformat()
+        finished = datetime.now(timezone.utc)
+        finished_at = finished.isoformat()
         with database:
+            failures = database.execute(
+                "SELECT failure_count FROM sources WHERE id = ?", (source_id,),
+            ).fetchone()[0] + 1
+            retry = timedelta(minutes=min(5 * 2 ** min(failures - 1, 7), 360))
+            database.execute(
+                "UPDATE sources SET next_sync_at = ?, failure_count = ? WHERE id = ?",
+                ((finished + retry).isoformat(), failures, source_id),
+            )
             _record_sync(database, source_id, started_at, finished_at, started, error=error)
         return False
     return True

@@ -2,7 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from threading import Barrier, Event
+from threading import Barrier, Event, Lock
+from time import sleep
 from unittest.mock import Mock, patch
 
 from jobsh.db import connect, register_source, save_jobs
@@ -126,8 +127,10 @@ class ManualImportTest(unittest.TestCase):
 
             self.assertEqual(sync(database, 3), (1, 0))
             first = database.execute("SELECT id, title FROM jobs").fetchone()
+            database.execute("UPDATE sources SET next_sync_at = NULL")
             self.assertEqual(sync(database, 3), (1, 0))
             second = database.execute("SELECT id, title FROM jobs").fetchone()
+            database.execute("UPDATE sources SET next_sync_at = NULL")
             self.assertEqual(sync(database, 3), (1, 0))
             final = database.execute("SELECT id, title FROM jobs").fetchone()
 
@@ -143,6 +146,31 @@ class ManualImportTest(unittest.TestCase):
                 )],
                 [(1, 0, 0), (0, 0, 1), (0, 1, 0)],
             )
+
+    def test_sync_only_fetches_due_sources_and_limits_each_host(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        active = peak = calls = 0
+        lock = Lock()
+
+        def adapter(url, timeout):
+            nonlocal active, peak, calls
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                calls += 1
+            sleep(.02)
+            with lock:
+                active -= 1
+            return []
+
+        with database:
+            for account in ("one", "two", "three"):
+                register_source(database, "example", account, f"https://example.test/{account}", "manual")
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
+            self.assertEqual(sync(database, 3, workers=3), (3, 0))
+            self.assertEqual(sync(database, 3, workers=3), (0, 0))
+        self.assertEqual((calls, peak), (3, 2))
 
 
 if __name__ == "__main__":

@@ -110,6 +110,7 @@ class NewAdaptersTest(unittest.TestCase):
                 ]
                 with patch(f"jobsh.adapters.{provider}.fetch", side_effect=payloads):
                     self.assertEqual(sync(database, 3), (1, 0))
+                database.execute("UPDATE sources SET next_sync_at = NULL")
                 failures = [encoded({})] if provider == "ashby" else [
                     encoded({"offset": 0, "totalFound": 1, "content": [{"id": "1"}]}), OSError("timeout"),
                 ]
