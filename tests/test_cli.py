@@ -57,6 +57,8 @@ class CliTest(unittest.TestCase):
                         self.assertEqual(database.execute(
                             "SELECT provider_account FROM sources ORDER BY provider_account"
                         ).fetchall(), [(account,) for account in expected])
+                        self.assertEqual(database.execute("SELECT count(*) FROM jobs").fetchone()[0],
+                                         sum(account != "empty" for account in expected))
                     self.assertEqual(fetch.call_count, calls)
 
     @patch("jobsh.adapters.personio.fetch", side_effect=[OSError("offline"), FEED])

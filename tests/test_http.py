@@ -103,6 +103,13 @@ class HttpTest(unittest.TestCase):
         response.iter_bytes.assert_called_once_with(3)
 
     @patch("jobsh.http.CLIENT.stream")
+    def test_fetch_posts_json(self, stream) -> None:
+        response = stream.return_value.__enter__.return_value
+        response.iter_bytes.return_value = [b"ok"]
+        self.assertEqual(fetch("https://example.com", 3, json={"offset": 0}), b"ok")
+        stream.assert_called_once_with("POST", "https://example.com", timeout=3, json={"offset": 0})
+
+    @patch("jobsh.http.CLIENT.stream")
     def test_fetch_rejects_oversized_response(self, stream) -> None:
         stream.return_value.__enter__.return_value.iter_bytes.return_value = [b"too"]
 
@@ -110,6 +117,9 @@ class HttpTest(unittest.TestCase):
             fetch("https://example.com", timeout=3, limit=2)
 
     @patch("jobsh.http.CLIENT.stream", side_effect=httpx.ConnectError("offline"))
-    def test_fetch_exposes_http_errors_as_os_errors(self, _stream) -> None:
+    @patch("jobsh.http.time.sleep")
+    def test_fetch_retries_transport_errors(self, sleep, stream) -> None:
         with self.assertRaisesRegex(OSError, "offline"):
             fetch("https://example.com", timeout=3)
+        self.assertEqual(stream.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [.25, .5])

@@ -112,6 +112,9 @@ class ManualImportTest(unittest.TestCase):
         self.assertEqual(final["last_seen_at"], "2026-09-03")
         for key, value in changed[0].items():
             self.assertEqual(final[key], value, key)
+        changed[0].update(description=None, content_hash="metadata-only")
+        self.assertEqual(save_jobs(database, source_id, changed, "2026-09-04"), (0, 1, 0))
+        self.assertEqual(database.execute("SELECT description FROM jobs").fetchone()[0], "New duties")
 
     @patch("jobsh.adapters.personio.fetch")
     def test_reimport_keeps_the_job_and_updates_changed_content(self, fetch) -> None:

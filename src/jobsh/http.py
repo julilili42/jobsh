@@ -27,7 +27,7 @@ class HTTPStatusError(OSError):
         super().__init__(message)
 
 
-def fetch(url: str, timeout: float, limit: int = 10_000_000) -> bytes:
+def _fetch(url: str, timeout: float, limit: int, json: dict | None) -> bytes:
     if timeout <= 0 or limit < 1:
         raise ValueError("timeout and response limit must be > 0")
     origin = urlsplit(url).netloc.lower()
@@ -39,7 +39,10 @@ def fetch(url: str, timeout: float, limit: int = 10_000_000) -> bytes:
             if _retry_at.get(origin, 0) > time.time():
                 raise OSError(f"Retry-After cooldown active for {origin}")
         try:
-            with CLIENT.stream("GET", url, timeout=timeout) as response:
+            options = {"timeout": timeout}
+            if json is not None:
+                options["json"] = json
+            with CLIENT.stream("POST" if json is not None else "GET", url, **options) as response:
                 response.raise_for_status()
                 data = bytearray()
                 for chunk in response.iter_bytes(min(64 * 1024, limit + 1)):
@@ -68,3 +71,16 @@ def fetch(url: str, timeout: float, limit: int = 10_000_000) -> bytes:
             raise HTTPStatusError(error.response.status_code, str(error)) from error
         except httpx.HTTPError as error:
             raise OSError(str(error)) from error
+
+
+def fetch(url: str, timeout: float, limit: int = 10_000_000, json: dict | None = None) -> bytes:
+    for attempt in range(3):
+        try:
+            return _fetch(url, timeout, limit, json)
+        except HTTPStatusError:
+            raise
+        except OSError as error:
+            if attempt == 2 or str(error).startswith("Retry-After cooldown"):
+                raise
+            time.sleep((attempt + 1) / 4)
+    raise AssertionError("unreachable")

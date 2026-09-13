@@ -10,6 +10,9 @@ uv run jobsh discovery --provider ashby --limit 100
 uv run jobsh discovery --provider smartrecruiters --limit 100
 uv run jobsh discovery --provider dvinci --limit 100
 uv run jobsh discovery --provider lever --limit 100
+uv run jobsh discovery --provider recruitee --limit 100
+uv run jobsh discovery --provider workable --limit 100
+uv run jobsh discovery --provider workday --limit 100
 uv run jobsh source add jsonld https://example.com/jobs/42
 uv run jobsh sync
 uv run jobsh search python --location Berlin --json
@@ -20,7 +23,7 @@ uv run jobsh stats --errors
 
 Data is stored in `jobsh.db`. Use `--db PATH` before the command to select another
 database. Discovery and sync import public jobs from Personio, Greenhouse,
-Ashby, SmartRecruiters, d.vinci and Lever.
+Ashby, SmartRecruiters, d.vinci, Lever, Recruitee, Workable and Workday.
 Search includes all open jobs, regardless of occupation or country.
 
 ## Architecture

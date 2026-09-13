@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -13,7 +14,10 @@ UPSERT_JOB = f"""
     VALUES (:source_id, :external_id, :seen_at, :seen_at, {', '.join(':' + name for name in JOB_FIELDS)})
     ON CONFLICT (source_id, external_id) DO UPDATE SET
         last_seen_at = :seen_at, missing_imports = 0, closed_at = NULL,
-        {', '.join(f'{name} = excluded.{name}' for name in JOB_FIELDS)}
+        {', '.join(
+            'description = COALESCE(excluded.description, jobs.description)'
+            if name == 'description' else f'{name} = excluded.{name}' for name in JOB_FIELDS
+        )}
 """
 
 
@@ -50,7 +54,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def register_source(
     database: sqlite3.Connection, provider: str, account: str, url: str,
     discovery: str, discovered_at: str | None = None,
-) -> None:
+) -> int:
     database.execute("INSERT INTO companies (name) VALUES (?) ON CONFLICT (name) DO NOTHING", (account,))
     database.execute(
         """INSERT INTO sources
@@ -68,11 +72,14 @@ def register_source(
         "DELETE FROM discovery_candidates WHERE provider = ? AND account = ?",
         (provider, account),
     )
+    return database.execute(
+        "SELECT id FROM sources WHERE provider = ? AND provider_account = ?", (provider, account),
+    ).fetchone()[0]
 
 
-def queue_candidates(
-    database: sqlite3.Connection, provider: str, candidates: list[tuple[str, str]], limit: int,
-) -> list[tuple[str, str]]:
+def checkpoint_discovery(
+    database: sqlite3.Connection, provider: str, candidates: list[tuple[str, str]], states: dict[str, dict],
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     database.executemany(
         """INSERT INTO discovery_candidates (provider, account, url, discovered_at)
@@ -83,6 +90,17 @@ def queue_candidates(
             url = excluded.url""",
         ((provider, account, url, now) for account, url in candidates),
     )
+    database.executemany(
+        "INSERT OR REPLACE INTO discovery_state VALUES (?, ?)",
+        ((domain, json.dumps(state)) for domain, state in states.items()),
+    )
+
+
+def queue_candidates(
+    database: sqlite3.Connection, provider: str, candidates: list[tuple[str, str]], limit: int,
+) -> list[tuple[str, str]]:
+    now = datetime.now(timezone.utc).isoformat()
+    checkpoint_discovery(database, provider, candidates, {})
     rows = database.execute(
         """SELECT account, url FROM discovery_candidates AS candidate
         WHERE provider = ? AND (retry_at IS NULL OR retry_at <= ?)
@@ -114,26 +132,27 @@ def save_jobs(
     records: list[dict[str, str | None]], seen_at: str,
 ) -> tuple[int, int, int]:
     existing = {
-        row["external_id"]: row
+        row["external_id"]: (row["content_hash"], row["title"])
         for row in database.execute(
-            f"SELECT external_id, {', '.join(JOB_FIELDS)} FROM jobs WHERE source_id = ?", (source_id,),
+            "SELECT external_id, content_hash, title FROM jobs WHERE source_id = ?", (source_id,),
         )
     }
     created = updated = 0
-    unchanged = []
+    changed, unchanged = [], []
     for record in records:
         values = record | {
             "source_id": source_id, "seen_at": seen_at, "source_category": record.get("source_category"),
         }
         previous = existing.get(record["external_id"])
-        if previous is not None and all(previous[name] == values[name] for name in JOB_FIELDS):
+        if previous == (record["content_hash"], record["title"]):
             unchanged.append((seen_at, source_id, record["external_id"]))
             continue
-        database.execute(UPSERT_JOB, values)
+        changed.append(values)
         if previous is None:
             created += 1
         else:
             updated += 1
+    database.executemany(UPSERT_JOB, changed)
     database.executemany(
         "UPDATE jobs SET last_seen_at = ?, missing_imports = 0, closed_at = NULL "
         "WHERE source_id = ? AND external_id = ?", unchanged,

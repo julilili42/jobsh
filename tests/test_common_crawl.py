@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import Mock, patch
 
@@ -5,10 +6,32 @@ from jobsh.adapters import ADAPTERS, Adapter
 from urllib.parse import parse_qs, urlsplit
 
 from jobsh.discovery import COLLECTIONS_URL, _read_json, discover, records
+from jobsh.db import connect
 from jobsh.http import HTTPStatusError
 
 
 class CommonCrawlTest(unittest.TestCase):
+    def test_discovery_checkpoints_long_scans(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        state = {}
+
+        def crawl(domain, timeout, cursor, collections):
+            for offset in range(1000):
+                cursor["offset"] = offset + 1
+                yield {"url": "https://irrelevant.example"}
+            raise OSError("interrupted")
+
+        adapter = Adapter(("boards.example",), lambda url: None, Mock(return_value=[]))
+        with patch("jobsh.discovery.records", side_effect=crawl), \
+                patch.dict("jobsh.discovery.ADAPTERS", {"example": adapter}), \
+                self.assertRaisesRegex(OSError, "interrupted"):
+            discover("example", 0, 1, 3, states={"boards.example": state}, database=database)
+        saved = database.execute(
+            "SELECT state FROM discovery_state WHERE domain = 'boards.example'"
+        ).fetchone()[0]
+        self.assertEqual(json.loads(saved)["offset"], 1000)
+
     @patch("jobsh.discovery.records")
     def test_adapter_supports_accounts_in_url_paths(self, records_mock):
         records_mock.return_value = [
@@ -152,6 +175,17 @@ class CommonCrawlTest(unittest.TestCase):
         self.assertEqual(list(records("example.com", 1, state)), [{"url": "https://one.example"}])
         self.assertEqual(state["endpoint"], "old")
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
+    @patch("jobsh.discovery.time.sleep")
+    @patch("jobsh.discovery.fetch")
+    def test_records_fall_back_when_a_collection_page_stays_broken(self, fetch, sleep):
+        fetch.side_effect = [
+            b'[{"cdx-api":"new","to":"2026"},{"cdx-api":"old","to":"2025"}]',
+            b'{"pages":1}', b'{"pages":1}',
+            *[HTTPStatusError(502, "bad gateway")] * 3,
+            b'{"url":"https://one.example"}\n',
+        ]
+        self.assertEqual(list(records("example.com", 1)), [{"url": "https://one.example"}])
 
     @patch("jobsh.discovery.verify", return_value=None)
     @patch("jobsh.discovery.time.sleep")

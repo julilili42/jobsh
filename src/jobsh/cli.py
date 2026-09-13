@@ -31,13 +31,6 @@ def _discovery(args: argparse.Namespace) -> None:
             provider, args.limit, args.workers, args.timeout, known_accounts,
             states, database, args.collections,
         )
-        with database:
-            for account, url, observed_at in feeds:
-                register_source(database, provider, account, url, "common-crawl", observed_at)
-            database.executemany(
-                "INSERT OR REPLACE INTO discovery_state VALUES (?, ?)",
-                ((domain, json.dumps(state)) for domain, state in states.items()),
-            )
     print(f"registered {len(feeds)} feeds", file=sys.stderr)
 
 

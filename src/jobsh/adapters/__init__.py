@@ -2,7 +2,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from . import ashby, dvinci, greenhouse, jsonld, lever, personio, smartrecruiters
+from . import ashby, dvinci, greenhouse, jsonld, lever, personio, recruitee, smartrecruiters, workable, workday
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,9 @@ ADAPTERS = {
     "jsonld": Adapter((), jsonld.source, jsonld.fetch_records),
     "lever": Adapter(("jobs.lever.co", "jobs.eu.lever.co"), lever.source, lever.fetch_records, lever.verify_feed),
     "personio": Adapter(("jobs.personio.de", "jobs.personio.com"), personio.source, personio.fetch_records),
+    "recruitee": Adapter(("recruitee.com",), recruitee.source, recruitee.fetch_records),
     "smartrecruiters": Adapter(("jobs.smartrecruiters.com", "careers.smartrecruiters.com"), smartrecruiters.source,
                                smartrecruiters.fetch_records, smartrecruiters.verify_feed),
+    "workable": Adapter(("apply.workable.com",), workable.source, workable.fetch_records),
+    "workday": Adapter(("myworkdayjobs.com",), workday.source, workday.fetch_records),
 }
