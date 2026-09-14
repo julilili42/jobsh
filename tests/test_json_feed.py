@@ -16,8 +16,10 @@ class JsonFeedTest(unittest.TestCase):
             (lever, LEVER, "text", "hostedUrl", "description"),
             (dvinci, DVINCI, "position", "jobPublicationURL", "tasks"),
         ):
-            def feed(jobs):
-                return json.dumps({"jobs": jobs} if adapter in (ashby, greenhouse) else jobs).encode()
+            wrapped = adapter in (ashby, greenhouse)
+
+            def feed(jobs, wrapped=wrapped):
+                return json.dumps({"jobs": jobs} if wrapped else jobs).encode()
 
             with self.subTest(adapter=adapter.__name__):
                 self.assertEqual(adapter.normalize_feed(feed([])), [])
@@ -36,6 +38,7 @@ class JsonFeedTest(unittest.TestCase):
 
     def test_lever_rejects_duplicates_across_pages(self):
         first = [LEVER | {"id": str(i)} for i in range(100)]
-        with patch("jobsh.adapters.lever.fetch", side_effect=[json.dumps(first).encode(), json.dumps(first[:1]).encode()]):
-            with self.assertRaisesRegex(ValueError, "across pages"):
-                lever.fetch_records("https://api.lever.co/v0/postings/acme", 3)
+        with patch("jobsh.adapters.lever.fetch", side_effect=[
+            json.dumps(first).encode(), json.dumps(first[:1]).encode(),
+        ]), self.assertRaisesRegex(ValueError, "across pages"):
+            lever.fetch_records("https://api.lever.co/v0/postings/acme", 3)

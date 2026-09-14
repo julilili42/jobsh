@@ -1,5 +1,4 @@
 """Local, read-only MCP access to the shared job search."""
-import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Literal
@@ -7,14 +6,14 @@ from typing import Any, Literal
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from .db import connect
-from .search import get_job as read_job, search
+from .db import connect, connect_readonly
+from .search import get_job as read_job
+from .search import search
 
 
 def serve(path: Path) -> None:
     with closing(connect(path)):
         pass
-    uri = path.resolve().as_uri() + "?mode=ro"
     server = FastMCP("jobsh", instructions=(
         "Search open jobs, then inspect promising hits with get_job. "
         "Jobs are not filtered by occupation or country. Location is free text and "
@@ -36,16 +35,14 @@ def serve(path: Path) -> None:
         by ID. Continue with next_cursor and unchanged filters until it is null.
         Limit: 1..100. Load full descriptions with get_job.
         """
-        with closing(sqlite3.connect(uri, uri=True)) as database:
-            database.row_factory = sqlite3.Row
+        with closing(connect_readonly(path)) as database:
             return search(database, query, title=title, location=location,
                           work_mode=work_mode, limit=limit, cursor=cursor)
 
     @server.tool(annotations=readonly)
     def get_job(id: int) -> dict[str, Any]:
         """Read a full job by ID, with plain-text description, source URL and freshness/closure dates."""
-        with closing(sqlite3.connect(uri, uri=True)) as database:
-            database.row_factory = sqlite3.Row
+        with closing(connect_readonly(path)) as database:
             return read_job(database, id)
 
     server.run(transport="stdio")

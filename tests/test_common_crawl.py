@@ -1,16 +1,52 @@
 import json
 import unittest
 from unittest.mock import Mock, patch
-
-from jobsh.adapters import ADAPTERS, Adapter
 from urllib.parse import parse_qs, urlsplit
 
+from jobsh.adapters import ADAPTERS, Adapter
+from jobsh.db import checkpoint_discovery, connect
 from jobsh.discovery import COLLECTIONS_URL, _read_json, discover, records
-from jobsh.db import connect
 from jobsh.http import HTTPStatusError
 
 
 class CommonCrawlTest(unittest.TestCase):
+    @patch("jobsh.discovery.records")
+    def test_discovery_prioritizes_saved_candidates_and_bounds_unlimited_runs(self, records_mock):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Adapter(("boards.example",), lambda url: (url.rsplit("/", 1)[-1], url), Mock(return_value=[]))
+        with database:
+            checkpoint_discovery(database, "example", [("saved", "https://api.example/saved")], {})
+        with patch.dict("jobsh.discovery.ADAPTERS", {"example": adapter}):
+            self.assertEqual(
+                [row[0] for row in discover("example", 1, 1, 3, database=database)], ["saved"]
+            )
+        records_mock.assert_not_called()
+
+        records_mock.return_value = [
+            {"url": f"https://api.example/{account}"} for account in ("one", "two", "three")
+        ]
+        with patch.dict("jobsh.discovery.ADAPTERS", {"example": adapter}), \
+                patch("jobsh.discovery.DISCOVERY_BATCH", 2):
+            self.assertEqual([row[0] for row in discover("example", 0, 1, 3)], ["one", "two"])
+
+    @patch("jobsh.discovery.records")
+    def test_discovery_reserves_capacity_for_fresh_candidates(self, records_mock):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Adapter(("boards.example",), lambda url: (url.rsplit("/", 1)[-1], url), Mock(return_value=[]))
+        with database:
+            checkpoint_discovery(database, "example", [
+                ("stale-one", "https://api.example/stale-one"),
+                ("stale-two", "https://api.example/stale-two"),
+            ], {})
+            database.execute("UPDATE discovery_candidates SET retry_at = '2000-01-01T00:00:00+00:00'")
+        records_mock.return_value = [{"url": "https://api.example/fresh"}]
+        with patch.dict("jobsh.discovery.ADAPTERS", {"example": adapter}):
+            result = discover("example", 2, 1, 3, database=database)
+        self.assertEqual([row[0] for row in result], ["fresh", "stale-one"])
+        records_mock.assert_called_once()
+
     def test_discovery_checkpoints_long_scans(self):
         database = connect(":memory:")
         self.addCleanup(database.close)
@@ -187,19 +223,19 @@ class CommonCrawlTest(unittest.TestCase):
         ]
         self.assertEqual(list(records("example.com", 1)), [{"url": "https://one.example"}])
 
-    @patch("jobsh.discovery.verify", return_value=None)
+    @patch("jobsh.discovery._verify_source", side_effect=OSError("skip"))
     @patch("jobsh.discovery.time.sleep")
     @patch("jobsh.discovery.fetch")
     def test_discovery_stops_after_enough_distinct_hosts(self, fetch, sleep, verify):
         fetch.side_effect = [
             b'[{"cdx-api":"index","to":"2026-01-01"}]',
             b'{"pages":100}',
-            b'{"url":"https://jobs.personio.de/"}\n'
-            b'{"url":"https://nested.alpha.jobs.personio.de/"}\n'
-            b'{"url":"https://zeta.jobs.personio.de/job/1"}\n'
-            b'{"url":"https://zeta.jobs.personio.de/job/2"}\n',
-            b'{"url":"https://beta.jobs.personio.de/job/1"}\n'
-            b'{"url":"https://alpha.jobs.personio.de/job/1"}\n',
+            (b'{"url":"https://jobs.personio.de/"}\n'
+             b'{"url":"https://nested.alpha.jobs.personio.de/"}\n'
+             b'{"url":"https://zeta.jobs.personio.de/job/1"}\n'
+             b'{"url":"https://zeta.jobs.personio.de/job/2"}\n'),
+            (b'{"url":"https://beta.jobs.personio.de/job/1"}\n'
+             b'{"url":"https://alpha.jobs.personio.de/job/1"}\n'),
         ]
         adapter = ADAPTERS["personio"]
         with patch.dict("jobsh.discovery.ADAPTERS", {

@@ -1,7 +1,7 @@
-import unittest
 import io
 import sqlite3
 import tempfile
+import unittest
 from contextlib import closing, redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
@@ -23,9 +23,9 @@ class CliTest(unittest.TestCase):
                     register_source(database, "personio", account, f"https://{account}.jobs.personio.de/xml", "manual")
             database.close()
             stderr = io.StringIO()
-            with patch("sys.argv", ["jobsh", "--db", str(path), "sync"]), redirect_stderr(stderr):
-                with self.assertRaises(SystemExit) as error:
-                    main()
+            with patch("sys.argv", ["jobsh", "--db", str(path), "sync"]), \
+                    redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                main()
             self.assertEqual(error.exception.code, 1)
             self.assertIn("1 source imports failed", stderr.getvalue())
             with closing(sqlite3.connect(path)) as database:
@@ -98,7 +98,7 @@ class CliTest(unittest.TestCase):
         sync = _build_parser().parse_args(["sync", "--timeout", "4"])
         self.assertEqual(sync.command, "sync")
         self.assertEqual(sync.db, Path("jobsh.db"))
-        self.assertEqual((sync.workers, sync.timeout), (32, 4))
+        self.assertEqual((sync.workers, sync.timeout, sync.limit), (32, 4, 0))
 
     def test_source_add_derives_and_registers_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jobsh.cli import main
-from jobsh.db import connect, fail_candidate, queue_candidates, register_source
+from jobsh.db import checkpoint_discovery, connect, fail_candidate, register_source
 
 
 class StatsTest(unittest.TestCase):
@@ -48,7 +48,8 @@ class StatsTest(unittest.TestCase):
 
             providers = {item["provider"]: item for item in json.loads(output.getvalue())}
             self.assertEqual(providers["personio"], {
-                "provider": "personio", "sources": 2, "open_jobs": 1, "syncs": 2,
+                "provider": "personio", "sources": 2, "open_jobs": 1,
+                "described_open_jobs": 0, "fresh_open_jobs": 0, "syncs": 2,
                 "last_success_at": "2026-01-01", "last_failure_at": "2026-01-02",
                 "last_error": "offline", "success_rate": 0.5,
             })
@@ -59,14 +60,16 @@ class StatsTest(unittest.TestCase):
             path = Path(directory) / "jobs.db"
             database = connect(path)
             with database:
-                queue_candidates(database, "personio", [
+                checkpoint_discovery(database, "personio", [
                     ("one", "https://one.jobs.personio.de"),
                     ("two", "https://two.jobs.personio.de"),
                     ("three", "https://three.jobs.personio.de"),
-                ], 0)
+                ], {})
                 fail_candidate(database, "personio", "one", ValueError("invalid feed"))
                 fail_candidate(database, "personio", "two", ValueError("invalid feed"))
                 fail_candidate(database, "personio", "three", OSError("offline"))
+                retries = dict(database.execute("SELECT account, retry_at FROM discovery_candidates"))
+                self.assertLess(retries["three"], retries["one"])
             database.close()
 
             output = io.StringIO()

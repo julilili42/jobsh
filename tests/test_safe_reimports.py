@@ -1,13 +1,13 @@
 import tempfile
 import unittest
-from unittest.mock import Mock
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import httpx
 
 from jobsh.db import connect, register_source
 from jobsh.http import fetch as http_fetch
 from jobsh.sync import sync
-import httpx
 
 FEED_URL = "https://example.jobs.personio.de/xml?language=de"
 FEED = (Path(__file__).parents[1] / "testdata/personio.xml").read_bytes()

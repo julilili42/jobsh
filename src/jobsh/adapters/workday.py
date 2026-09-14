@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from ..http import fetch
 from .json_feed import normalize
 
+
 def source(url: str) -> tuple[str, str] | None:
     parsed = urlsplit(url)
     match = re.fullmatch(r"([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com", parsed.hostname or "")

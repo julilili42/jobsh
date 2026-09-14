@@ -123,3 +123,11 @@ class HttpTest(unittest.TestCase):
             fetch("https://example.com", timeout=3)
         self.assertEqual(stream.call_count, 3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [.25, .5])
+
+    @patch("jobsh.http.CLIENT.stream", side_effect=httpx.ConnectError("[Errno 61] Connection refused"))
+    @patch("jobsh.http.time.sleep")
+    def test_fetch_leaves_connection_refusals_to_source_backoff(self, sleep, stream) -> None:
+        with self.assertRaisesRegex(OSError, "Connection refused"):
+            fetch("https://example.com", timeout=3)
+        stream.assert_called_once()
+        sleep.assert_not_called()

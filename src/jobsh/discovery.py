@@ -4,17 +4,24 @@ import sys
 import time
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from itertools import islice
 from urllib.parse import urlencode
 
-from .http import HTTPStatusError, fetch
 from .adapters import ADAPTERS, Adapter
-from .db import checkpoint_discovery, fail_candidate, queue_candidates, register_source, save_source
+from .db import (
+    checkpoint_discovery,
+    fail_candidate,
+    queue_candidates,
+    register_source,
+    save_source,
+)
+from .http import HTTPStatusError, fetch
 
 COLLECTIONS_URL = "https://index.commoncrawl.org/collinfo.json"
 RETRYABLE_INDEX_ERRORS = {400, 408, 425, 500, 502, 504}
+DISCOVERY_BATCH = 1_000
 
 
 def _read_json(url: str, timeout: float, *, lines: bool = False):
@@ -90,15 +97,12 @@ def records(domain: str, timeout: float, state: dict | None = None, collection_c
                 break
 
 
-def verify(source: tuple[str, str], adapter: Adapter, timeout: float):
+def _verify_source(source: tuple[str, str], adapter: Adapter, timeout: float):
     account, url = source
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
     started = time.monotonic()
-    try:
-        records = adapter.verify(url, timeout) if adapter.verify else adapter.fetch_records(url, timeout)
-    except (OSError, ValueError) as error:
-        return error
-    return account, url, datetime.now(timezone.utc).isoformat(), started_at, started, records
+    records = adapter.verify(url, timeout) if adapter.verify else adapter.fetch_records(url, timeout)
+    return account, url, datetime.now(UTC).isoformat(), started_at, started, records
 
 
 def discover(
@@ -111,40 +115,63 @@ def discover(
     adapter = ADAPTERS[provider]
     if not adapter.domains:
         raise ValueError(f"{provider} does not support Common Crawl discovery")
+    if database is not None:
+        if known_accounts is None:
+            known_accounts = {
+                row[0] for row in database.execute(
+                    "SELECT provider_account FROM sources WHERE provider = ?", (provider,)
+                )
+            }
+        if states is None:
+            states = {}
+            for domain in adapter.domains:
+                row = database.execute(
+                    "SELECT state FROM discovery_state WHERE domain = ?", (domain,)
+                ).fetchone()
+                states[domain] = json.loads(row[0]) if row else {}
     known_accounts = known_accounts or set()
-    print("collecting candidates from Common Crawl", file=sys.stderr)
-    candidates, pending = {}, []
-    scanned = 0
-    states = states if states is not None else {}
-    streams = deque(
-        iter(records(domain, timeout, states.setdefault(domain, {}), collections))
-        for domain in adapter.domains
-    )
-    while streams and (not limit or len(candidates) < limit):
-        stream = streams.popleft()
-        try:
-            record = next(stream)
-        except StopIteration:
-            continue
-        scanned += 1
-        source = adapter.source(record.get("url", ""))
-        if source is not None and source[0] not in known_accounts and source[0] not in candidates:
-            candidates[source[0]] = source
-            pending.append(source)
-        if database is not None and (len(pending) >= 100 or scanned % 1000 == 0):
+    candidate_limit = limit or DISCOVERY_BATCH
+    retry_limit = max(1, candidate_limit // 2)
+    candidates = {
+        account: (account, url)
+        for account, url in (queue_candidates(database, provider, retry_limit) if database is not None else [])
+    }
+    pending = []
+    if len(candidates) < candidate_limit:
+        print("collecting candidates from Common Crawl", file=sys.stderr)
+        scanned = 0
+        states = states if states is not None else {}
+        streams = deque(
+            iter(records(domain, timeout, states.setdefault(domain, {}), collections))
+            for domain in adapter.domains
+        )
+        while streams and len(candidates) < candidate_limit:
+            stream = streams.popleft()
+            try:
+                record = next(stream)
+            except StopIteration:
+                continue
+            scanned += 1
+            source = adapter.source(record.get("url", ""))
+            if source is not None and source[0] not in known_accounts and source[0] not in candidates:
+                candidates[source[0]] = source
+                pending.append(source)
+            if database is not None and (len(pending) >= 100 or scanned % 1000 == 0):
+                with database:
+                    checkpoint_discovery(database, provider, pending, states)
+                pending.clear()
+            streams.append(stream)
+        if database is not None:
             with database:
                 checkpoint_discovery(database, provider, pending, states)
-            pending.clear()
-        streams.append(stream)
-    if database is not None:
-        with database:
-            checkpoint_discovery(database, provider, pending, states)
-            candidates = queue_candidates(database, provider, [], limit)
+                candidates = queue_candidates(database, provider, candidate_limit)
+        else:
+            candidates = list(candidates.values())
     else:
         candidates = list(candidates.values())
     print(f"verifying {len(candidates)} candidates", file=sys.stderr)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        verify_source = partial(verify, adapter=adapter, timeout=timeout)
+        verify_source = partial(_verify_source, adapter=adapter, timeout=timeout)
         candidates.sort()
         results = []
         remaining = iter(candidates)
@@ -153,12 +180,13 @@ def discover(
             completed, _ = wait(futures, return_when=FIRST_COMPLETED)
             for future in completed:
                 account, _ = futures.pop(future)
-                result = future.result()
-                if isinstance(result, Exception):
+                try:
+                    result = future.result()
+                except (OSError, ValueError) as error:
                     if database is not None:
                         with database:
-                            fail_candidate(database, provider, account, result)
-                elif result is not None:
+                            fail_candidate(database, provider, account, error)
+                else:
                     account, url, observed_at, started_at, started, fetched_records = result
                     if database is not None:
                         with database:

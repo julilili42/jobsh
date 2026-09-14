@@ -2,7 +2,18 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from . import ashby, dvinci, greenhouse, jsonld, lever, personio, recruitee, smartrecruiters, workable, workday
+from . import (
+    ashby,
+    dvinci,
+    greenhouse,
+    jsonld,
+    lever,
+    personio,
+    recruitee,
+    smartrecruiters,
+    workable,
+    workday,
+)
 
 
 @dataclass(frozen=True)

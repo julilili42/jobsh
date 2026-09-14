@@ -5,7 +5,6 @@ from unittest.mock import patch
 from jobsh.adapters import ADAPTERS, jsonld
 from jobsh.discovery import discover
 
-
 JOB = {
     "@type": ["Thing", "https://schema.org/JobPosting"],
     "identifier": {"@type": "PropertyValue", "value": 42},

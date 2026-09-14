@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from jobsh.adapters.personio import normalize_feed, source, validated_positions
 from jobsh.discovery import discover
-from jobsh.adapters.personio import validated_positions, normalize_feed, source
 
 FIXTURES = Path(__file__).parents[1] / "testdata"
 

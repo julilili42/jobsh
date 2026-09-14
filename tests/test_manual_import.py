@@ -1,13 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from threading import Barrier, Event, Lock
 from time import sleep
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from jobsh.db import connect, register_source, save_jobs
+import jobsh.sync as sync_module
 from jobsh.adapters.personio import normalize_feed
+from jobsh.db import connect, register_source, save_jobs
 from jobsh.sync import sync
 
 FIXTURE = Path(__file__).parents[1] / "testdata" / "personio.xml"
@@ -21,9 +22,8 @@ class ManualImportTest(unittest.TestCase):
         saved = Event()
 
         def adapter(url, timeout):
-            if "slow" in url:
-                if not saved.wait(3):
-                    raise ValueError("fast source was not saved")
+            if "slow" in url and not saved.wait(3):
+                raise ValueError("fast source was not saved")
             return []
 
         database.create_function("notify_saved", 0, lambda: saved.set() or 0)
@@ -116,6 +116,22 @@ class ManualImportTest(unittest.TestCase):
         self.assertEqual(save_jobs(database, source_id, changed, "2026-09-04"), (0, 1, 0))
         self.assertEqual(database.execute("SELECT description FROM jobs").fetchone()[0], "New duties")
 
+    def test_reimport_batches_unchanged_jobs(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        register_source(database, "personio", "example", FEED_URL, "manual")
+        source_id = database.execute("SELECT id FROM sources").fetchone()["id"]
+        record, = normalize_feed(FIXTURE.read_bytes(), FEED_URL)
+        records = [record | {"external_id": str(index), "content_hash": str(index)} for index in range(501)]
+        self.assertEqual(save_jobs(database, source_id, records, "2026-09-01"), (501, 0, 0))
+        statements = []
+        database.set_trace_callback(statements.append)
+        self.assertEqual(save_jobs(database, source_id, records, "2026-09-02"), (0, 0, 501))
+        database.set_trace_callback(None)
+        self.assertEqual(
+            sum(statement.startswith("UPDATE jobs SET last_seen_at") for statement in statements), 2
+        )
+
     @patch("jobsh.adapters.personio.fetch")
     def test_reimport_keeps_the_job_and_updates_changed_content(self, fetch) -> None:
         original = FIXTURE.read_bytes()
@@ -174,6 +190,31 @@ class ManualImportTest(unittest.TestCase):
             self.assertEqual(sync(database, 3, workers=3), (3, 0))
             self.assertEqual(sync(database, 3, workers=3), (0, 0))
         self.assertEqual((calls, peak), (3, 3))
+
+    def test_sync_processes_due_sources_in_bounded_batches(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Mock(return_value=[])
+        with database:
+            for account in ("one", "two", "three", "four", "five"):
+                register_source(database, "example", account, f"https://{account}.example", "manual")
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}), \
+                patch("jobsh.sync.SOURCE_BATCH", 2), \
+                patch("jobsh.sync._sync_sources", wraps=sync_module._sync_sources) as batches:
+            self.assertEqual(sync(database, 3, workers=2), (5, 0))
+        self.assertEqual((adapter.call_count, batches.call_count), (5, 3))
+
+    def test_sync_limit_leaves_remaining_sources_due(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Mock(return_value=[])
+        with database:
+            for account in ("one", "two", "three", "four", "five"):
+                register_source(database, "example", account, f"https://{account}.example", "manual")
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}):
+            self.assertEqual(sync(database, 3, workers=2, limit=3), (3, 0))
+            self.assertEqual(sync(database, 3, workers=2), (2, 0))
+        self.assertEqual(adapter.call_count, 5)
 
 
 if __name__ == "__main__":

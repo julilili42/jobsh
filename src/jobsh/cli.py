@@ -7,29 +7,17 @@ from pathlib import Path
 
 from .adapters import ADAPTERS
 from .db import connect, register_source
-from .discovery import discover
+from .discovery import DISCOVERY_BATCH, discover
 from .search import get_job, search
 from .stats import candidate_errors, stats
 from .sync import sync
 
 
 def _discovery(args: argparse.Namespace) -> None:
-    provider = args.provider
-    domains = ADAPTERS[provider].domains
     with closing(connect(args.db)) as database:
-        known_accounts = {
-            row[0]
-            for row in database.execute("SELECT provider_account FROM sources WHERE provider = ?", (provider,))
-        }
-        states = {}
-        for domain in domains:
-            saved = database.execute(
-                "SELECT state FROM discovery_state WHERE domain = ?", (domain,)
-            ).fetchone()
-            states[domain] = json.loads(saved[0]) if saved else {}
         feeds = discover(
-            provider, args.limit, args.workers, args.timeout, known_accounts,
-            states, database, args.collections,
+            args.provider, args.limit, args.workers, args.timeout,
+            database=database, collections=args.collections,
         )
     print(f"registered {len(feeds)} feeds", file=sys.stderr)
 
@@ -46,7 +34,7 @@ def _source_add(args: argparse.Namespace) -> None:
 
 def _sync(args: argparse.Namespace) -> None:
     with closing(connect(args.db)) as database:
-        succeeded, failed = sync(database, args.timeout, args.workers)
+        succeeded, failed = sync(database, args.timeout, args.workers, args.limit)
     print(f"synced {succeeded} sources; {failed} failed", file=sys.stderr)
     if failed:
         raise OSError(f"{failed} source imports failed")
@@ -87,7 +75,7 @@ def _stats(args: argparse.Namespace) -> None:
         for row in rows:
             print(f"{row['candidates']}\t{row['provider']}\t{row['error']}\t{row['example_url']}")
         return
-    print("provider\tsources\topen jobs\tsync success\tlast success\tlast failure")
+    print("provider\tsources\topen jobs\tfresh open\twith description\tsync success\tlast success\tlast failure")
     for provider in rows:
         rate = "-" if provider["success_rate"] is None else f"{provider['success_rate']:.0%}"
         failure = provider["last_failure_at"] or "-"
@@ -95,6 +83,7 @@ def _stats(args: argparse.Namespace) -> None:
             failure += f" ({provider['last_error']})"
         print(
             f"{provider['provider']}\t{provider['sources']}\t{provider['open_jobs']}\t"
+            f"{provider['fresh_open_jobs']}\t{provider['described_open_jobs']}\t"
             f"{rate}\t{provider['last_success_at'] or '-'}\t{failure}"
         )
 
@@ -122,8 +111,10 @@ def _build_parser() -> argparse.ArgumentParser:
                 "--provider", choices=[name for name, adapter in ADAPTERS.items() if adapter.domains],
                 default="personio",
             )
-            command.add_argument("--limit", type=int, default=0, help="maximum hosts to verify")
+            command.add_argument("--limit", type=int, default=DISCOVERY_BATCH, help="maximum hosts to verify per run")
             command.add_argument("--collections", type=int, default=1, help="recent crawl collections to search")
+        else:
+            command.add_argument("--limit", type=int, default=0, help="maximum sources to import (0: all due)")
 
     source = commands.add_parser("source", help="manage sources").add_subparsers(required=True)
     command = source.add_parser("add", help="register a public job URL")

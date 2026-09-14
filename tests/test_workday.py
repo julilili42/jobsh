@@ -4,7 +4,6 @@ from unittest.mock import patch
 
 from jobsh.adapters import workday
 
-
 URL = "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/External/jobs"
 POSTING = {"title": "Python Engineer", "externalPath": "/job/Berlin/Python-Engineer_JR-1"}
 POSTING |= {"locationsText": "Berlin, Germany", "remoteType": "Hybrid"}

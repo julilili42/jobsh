@@ -98,8 +98,8 @@ def _record(job: dict, page_url: str) -> dict:
     remote = job.get("jobLocationType")
     remote = {value.upper() for value in (remote if isinstance(remote, list) else [remote])
               if isinstance(value, str)}
-    mode = "hybrid" if re.search(r"\bhybrid\b", searchable, re.I) else (
-        "remote" if "TELECOMMUTE" in remote or re.search(r"\bremote\b", searchable, re.I)
+    mode = "hybrid" if re.search(r"\bhybrid\b", searchable, re.IGNORECASE) else (
+        "remote" if "TELECOMMUTE" in remote or re.search(r"\bremote\b", searchable, re.IGNORECASE)
         else "onsite" if locations else "unknown"
     )
 

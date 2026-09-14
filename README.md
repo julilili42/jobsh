@@ -15,6 +15,7 @@ uv run jobsh discovery --provider workable --limit 100
 uv run jobsh discovery --provider workday --limit 100
 uv run jobsh source add jsonld https://example.com/jobs/42
 uv run jobsh sync
+uv run jobsh sync --limit 1000
 uv run jobsh search python --location Berlin --json
 uv run jobsh show 42 --json
 uv run jobsh stats --json
@@ -25,21 +26,22 @@ Data is stored in `jobsh.db`. Use `--db PATH` before the command to select anoth
 database. Discovery and sync import public jobs from Personio, Greenhouse,
 Ashby, SmartRecruiters, d.vinci, Lever, Recruitee, Workable and Workday.
 Search includes all open jobs, regardless of occupation or country.
+`stats` reports open jobs, jobs refreshed within 24 hours and description coverage per provider.
 
 ## Architecture
 
 Common Crawl → verified feeds → adapters → SQLite → CLI / MCP.
 
-- `discovery.py` finds feeds and resumes from the saved index position.
+- `discovery.py` finds feeds in bounded batches and resumes from the saved index position.
 - `adapters/` validates complete feeds and maps provider data to job records.
-- `sync.py` downloads feeds with bounded workers and saves completed sources immediately.
+- `sync.py` loads due sources in bounded batches, downloads with bounded workers and saves completed sources immediately.
 - `db.py` initializes SQLite and stores sources and jobs; `search.py` queries them.
 
 Each source import commits jobs, closure counters and its run report together.
 Failed imports preserve existing jobs. Two successful imports without a job close
 it; a returning job reopens with its original ID. Unchanged jobs avoid index writes.
 HTTP requests have time/size limits and respect `Retry-After` cooldowns.
-Failed discovery candidates are retried after one day. Changed feeds run again
+Transient discovery failures are retried after five minutes, invalid feeds after one day. Changed feeds run again
 after one hour, unchanged feeds after six; import failures use exponential backoff.
 
 ## MCP
@@ -73,7 +75,8 @@ replacing the absolute paths:
 - `get_job(id)` returns the full plain-text description, source URL and freshness/closure dates,
   including for closed jobs.
 
-Search uses SQLite FTS5 over titles and descriptions; words are combined with AND.
+Search uses SQLite FTS5 over titles and descriptions; long title/location filters use a separate trigram index.
+Words are combined with AND.
 C++, C# and .NET are matched literally. Title and location are substring filters;
 work mode accepts remote, hybrid, onsite or unknown. Location is source text and
 work mode comes from structured metadata where available, otherwise heuristics:

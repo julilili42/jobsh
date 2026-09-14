@@ -80,7 +80,8 @@ def fetch(url: str, timeout: float, limit: int = 10_000_000, json: dict | None =
         except HTTPStatusError:
             raise
         except OSError as error:
-            if attempt == 2 or str(error).startswith("Retry-After cooldown"):
+            if (attempt == 2 or "Connection refused" in str(error)
+                    or str(error).startswith("Retry-After cooldown")):
                 raise
             time.sleep((attempt + 1) / 4)
     raise AssertionError("unreachable")
