@@ -47,6 +47,21 @@ class CommonCrawlTest(unittest.TestCase):
         self.assertEqual([row[0] for row in result], ["fresh", "stale-one"])
         records_mock.assert_called_once()
 
+    @patch("jobsh.discovery.records")
+    def test_discovery_limits_retries_to_half_the_batch(self, records_mock):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Adapter(("boards.example",), lambda url: (url.rsplit("/", 1)[-1], url), Mock(return_value=[]))
+        with database:
+            checkpoint_discovery(database, "example", [
+                (f"retry-{index}", f"https://api.example/retry-{index}") for index in range(4)
+            ], {})
+            database.execute("UPDATE discovery_candidates SET retry_at = '2000-01-01T00:00:00+00:00'")
+        records_mock.return_value = [{"url": f"https://api.example/fresh-{index}"} for index in range(2)]
+        with patch.dict("jobsh.discovery.ADAPTERS", {"example": adapter}):
+            result = discover("example", 4, 1, 3, database=database)
+        self.assertEqual([row[0] for row in result], ["fresh-0", "fresh-1", "retry-0", "retry-1"])
+
     def test_discovery_checkpoints_long_scans(self):
         database = connect(":memory:")
         self.addCleanup(database.close)

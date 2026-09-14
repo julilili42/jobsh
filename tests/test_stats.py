@@ -48,8 +48,9 @@ class StatsTest(unittest.TestCase):
 
             providers = {item["provider"]: item for item in json.loads(output.getvalue())}
             self.assertEqual(providers["personio"], {
-                "provider": "personio", "sources": 2, "open_jobs": 1,
-                "described_open_jobs": 0, "fresh_open_jobs": 0, "syncs": 2,
+                "provider": "personio", "sources": 2, "discovered_sources": 0, "open_jobs": 1,
+                "described_open_jobs": 0, "fresh_open_jobs": 0, "new_open_jobs": 0, "syncs": 2,
+                "average_sync_ms": 1.0,
                 "last_success_at": "2026-01-01", "last_failure_at": "2026-01-02",
                 "last_error": "offline", "success_rate": 0.5,
             })
@@ -78,9 +79,9 @@ class StatsTest(unittest.TestCase):
                 main()
 
             self.assertEqual(json.loads(output.getvalue()), [
-                {"provider": "personio", "error": "invalid feed", "candidates": 2,
+                {"stage": "discovery", "provider": "personio", "error": "invalid feed", "failures": 2,
                  "example_url": "https://one.jobs.personio.de"},
-                {"provider": "personio", "error": "offline", "candidates": 1,
+                {"stage": "discovery", "provider": "personio", "error": "offline", "failures": 1,
                  "example_url": "https://three.jobs.personio.de"},
             ])
 

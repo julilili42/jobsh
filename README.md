@@ -28,7 +28,8 @@ Ashby, SmartRecruiters, d.vinci, Lever, Recruitee, Workable, Workday, Jobvite,
 softgarden and Teamtailor.
 For a targeted refresh, use `uv run jobsh sync --provider NAME --limit 100`.
 Search includes all open jobs, regardless of occupation or country.
-`stats` reports open jobs, jobs refreshed within 24 hours and description coverage per provider.
+`stats` reports open jobs, new discoveries and jobs within 24 hours, description coverage,
+sync latency and success rate per provider. `stats --errors` separates discovery from sync failures.
 
 ## Architecture
 

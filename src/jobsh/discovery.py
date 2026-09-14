@@ -133,9 +133,13 @@ def discover(
     known_accounts = known_accounts or set()
     candidate_limit = limit or DISCOVERY_BATCH
     retry_limit = max(1, candidate_limit // 2)
+    retries = queue_candidates(database, provider, retry_limit, retries=True) if database is not None else []
+    fresh = queue_candidates(
+        database, provider, candidate_limit - len(retries), retries=False,
+    ) if database is not None else []
     candidates = {
         account: (account, url)
-        for account, url in (queue_candidates(database, provider, retry_limit) if database is not None else [])
+        for account, url in retries + fresh
     }
     with display() as progress:
         crawl = progress.add_task("Discovering candidates", total=None)
@@ -167,7 +171,10 @@ def discover(
             if database is not None:
                 with database:
                     checkpoint_discovery(database, provider, pending, states)
-                    candidates = queue_candidates(database, provider, candidate_limit)
+                    fresh = queue_candidates(
+                        database, provider, candidate_limit - len(retries), retries=False,
+                    )
+                    candidates = retries + fresh
             else:
                 candidates = list(candidates.values())
         else:

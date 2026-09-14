@@ -71,19 +71,19 @@ def _stats(args: argparse.Namespace) -> None:
         print(json.dumps(rows, ensure_ascii=False))
         return
     if args.errors:
-        print("candidates\tprovider\terror\texample")
+        print("stage\tfailures\tprovider\terror\texample")
         for row in rows:
-            print(f"{row['candidates']}\t{row['provider']}\t{row['error']}\t{row['example_url']}")
+            print(f"{row['stage']}\t{row['failures']}\t{row['provider']}\t{row['error']}\t{row['example_url']}")
         return
-    print("provider\tsources\topen jobs\tfresh open\twith description\tsync success\tlast success\tlast failure")
+    print("provider\tsources\tdiscovered\topen jobs\tnew open\tfresh open\twith description\tavg sync ms\tsync success\tlast success\tlast failure")
     for provider in rows:
         rate = "-" if provider["success_rate"] is None else f"{provider['success_rate']:.0%}"
         failure = provider["last_failure_at"] or "-"
         if provider["last_error"]:
             failure += f" ({provider['last_error']})"
         print(
-            f"{provider['provider']}\t{provider['sources']}\t{provider['open_jobs']}\t"
-            f"{provider['fresh_open_jobs']}\t{provider['described_open_jobs']}\t"
+            f"{provider['provider']}\t{provider['sources']}\t{provider['discovered_sources']}\t{provider['open_jobs']}\t"
+            f"{provider['new_open_jobs']}\t{provider['fresh_open_jobs']}\t{provider['described_open_jobs']}\t{provider['average_sync_ms']}\t"
             f"{rate}\t{provider['last_success_at'] or '-'}\t{failure}"
         )
 

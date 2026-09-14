@@ -108,11 +108,15 @@ def checkpoint_discovery(
     )
 
 
-def queue_candidates(database: sqlite3.Connection, provider: str, limit: int) -> list[tuple[str, str]]:
+def queue_candidates(
+    database: sqlite3.Connection, provider: str, limit: int, retries: bool | None = None,
+) -> list[tuple[str, str]]:
     now = datetime.now(UTC).isoformat()
+    retry_filter = "" if retries is None else " AND retry_at IS " + ("NOT NULL" if retries else "NULL")
     rows = database.execute(
         """SELECT account, url FROM discovery_candidates AS candidate
         WHERE provider = ? AND (retry_at IS NULL OR retry_at <= ?)
+        """ + retry_filter + """
           AND NOT EXISTS (
               SELECT 1 FROM sources
               WHERE provider = candidate.provider AND provider_account = candidate.account
