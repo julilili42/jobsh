@@ -18,6 +18,7 @@ from .db import (
     save_source,
 )
 from .http import HTTPStatusError, fetch
+from .progress import display
 
 COLLECTIONS_URL = "https://index.commoncrawl.org/collinfo.json"
 RETRYABLE_INDEX_ERRORS = {400, 408, 425, 500, 502, 504}
@@ -136,67 +137,71 @@ def discover(
         account: (account, url)
         for account, url in (queue_candidates(database, provider, retry_limit) if database is not None else [])
     }
-    pending = []
-    if len(candidates) < candidate_limit:
-        print("collecting candidates from Common Crawl", file=sys.stderr)
-        scanned = 0
-        states = states if states is not None else {}
-        streams = deque(
-            iter(records(domain, timeout, states.setdefault(domain, {}), collections))
-            for domain in adapter.domains
-        )
-        while streams and len(candidates) < candidate_limit:
-            stream = streams.popleft()
-            try:
-                record = next(stream)
-            except StopIteration:
-                continue
-            scanned += 1
-            source = adapter.source(record.get("url", ""))
-            if source is not None and source[0] not in known_accounts and source[0] not in candidates:
-                candidates[source[0]] = source
-                pending.append(source)
-            if database is not None and (len(pending) >= 100 or scanned % 1000 == 0):
+    with display() as progress:
+        crawl = progress.add_task("Discovering candidates", total=None)
+        pending = []
+        if len(candidates) < candidate_limit:
+            scanned = 0
+            states = states if states is not None else {}
+            streams = deque(
+                iter(records(domain, timeout, states.setdefault(domain, {}), collections))
+                for domain in adapter.domains
+            )
+            while streams and len(candidates) < candidate_limit:
+                stream = streams.popleft()
+                try:
+                    record = next(stream)
+                except StopIteration:
+                    continue
+                scanned += 1
+                source = adapter.source(record.get("url", ""))
+                if source is not None and source[0] not in known_accounts and source[0] not in candidates:
+                    candidates[source[0]] = source
+                    pending.append(source)
+                    progress.update(crawl, description=f"Discovering candidates ({len(candidates)}/{candidate_limit})")
+                if database is not None and (len(pending) >= 100 or scanned % 1000 == 0):
+                    with database:
+                        checkpoint_discovery(database, provider, pending, states)
+                    pending.clear()
+                streams.append(stream)
+            if database is not None:
                 with database:
                     checkpoint_discovery(database, provider, pending, states)
-                pending.clear()
-            streams.append(stream)
-        if database is not None:
-            with database:
-                checkpoint_discovery(database, provider, pending, states)
-                candidates = queue_candidates(database, provider, candidate_limit)
+                    candidates = queue_candidates(database, provider, candidate_limit)
+            else:
+                candidates = list(candidates.values())
         else:
             candidates = list(candidates.values())
-    else:
-        candidates = list(candidates.values())
-    print(f"verifying {len(candidates)} candidates", file=sys.stderr)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        verify_source = partial(_verify_source, adapter=adapter, timeout=timeout)
-        candidates.sort()
-        results = []
-        remaining = iter(candidates)
-        futures = {pool.submit(verify_source, candidate): candidate for candidate in islice(remaining, workers)}
-        while futures:
-            completed, _ = wait(futures, return_when=FIRST_COMPLETED)
-            for future in completed:
-                account, _ = futures.pop(future)
-                try:
-                    result = future.result()
-                except (OSError, ValueError) as error:
-                    if database is not None:
-                        with database:
-                            fail_candidate(database, provider, account, error)
-                else:
-                    account, url, observed_at, started_at, started, fetched_records = result
-                    if database is not None:
-                        with database:
-                            source_id = register_source(database, provider, account, url, "common-crawl", observed_at)
-                        if fetched_records is not None:
-                            save_source(database, source_id, started_at, started, fetched_records, None)
-                    results.append((account, url, observed_at))
-                candidate = next(remaining, None)
-                if candidate is not None:
-                    futures[pool.submit(verify_source, candidate)] = candidate
-        results.sort()
+        progress.remove_task(crawl)
+        verify = progress.add_task("Verifying candidates", total=len(candidates))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            verify_source = partial(_verify_source, adapter=adapter, timeout=timeout)
+            candidates.sort()
+            results = []
+            remaining = iter(candidates)
+            futures = {pool.submit(verify_source, candidate): candidate for candidate in islice(remaining, workers)}
+            while futures:
+                completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    account, _ = futures.pop(future)
+                    try:
+                        result = future.result()
+                    except (OSError, ValueError) as error:
+                        if database is not None:
+                            with database:
+                                fail_candidate(database, provider, account, error)
+                    else:
+                        account, url, observed_at, started_at, started, fetched_records = result
+                        if database is not None:
+                            with database:
+                                source_id = register_source(database, provider, account, url, "common-crawl", observed_at)
+                            if fetched_records is not None:
+                                save_source(database, source_id, started_at, started, fetched_records, None)
+                        results.append((account, url, observed_at))
+                    progress.advance(verify)
+                    candidate = next(remaining, None)
+                    if candidate is not None:
+                        futures[pool.submit(verify_source, candidate)] = candidate
+            results.sort()
     print(f"verified {len(results)} feeds", file=sys.stderr)
     return results

@@ -5,8 +5,11 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
+from rich.progress import Progress
+
 from .adapters import ADAPTERS
 from .db import save_source
+from .progress import display
 
 PER_HOST_WORKERS = 8
 SOURCE_BATCH = 1_000
@@ -36,8 +39,18 @@ def _due_sources(
     ).fetchall()
 
 
+def _due_source_count(database: sqlite3.Connection, now: str, limit: int, provider: str | None) -> int:
+    provider_filter = " AND provider = ?" if provider else ""
+    count = database.execute(
+        "SELECT COUNT(*) FROM sources WHERE (next_sync_at IS NULL OR next_sync_at <= ?)" + provider_filter,
+        (now, provider) if provider else (now,),
+    ).fetchone()[0]
+    return min(count, limit) if limit else count
+
+
 def _sync_sources(
     database: sqlite3.Connection, sources: list[sqlite3.Row], timeout: float, workers: int,
+    progress: Progress, task: int,
 ) -> int:
     hosts: dict[str, deque[sqlite3.Row]] = {}
     for source in sources:
@@ -66,6 +79,7 @@ def _sync_sources(
                 host = pending.pop(future)
                 active[host] -= 1
                 succeeded += save_source(database, *future.result())
+                progress.advance(task)
                 if hosts[host] and host not in queued:
                     ready.append(host)
                     queued.add(host)
@@ -80,12 +94,14 @@ def sync(
         raise ValueError("timeout and workers must be > 0; limit must be >= 0")
     now = datetime.now(UTC).isoformat()
     succeeded = total = 0
-    while not limit or total < limit:
-        sources = _due_sources(
-            database, now, min(SOURCE_BATCH, limit - total) if limit else SOURCE_BATCH, provider,
-        )
-        if not sources:
-            break
-        total += len(sources)
-        succeeded += _sync_sources(database, sources, timeout, workers)
+    with display() as progress:
+        task = progress.add_task("Syncing sources", total=_due_source_count(database, now, limit, provider))
+        while not limit or total < limit:
+            sources = _due_sources(
+                database, now, min(SOURCE_BATCH, limit - total) if limit else SOURCE_BATCH, provider,
+            )
+            if not sources:
+                break
+            total += len(sources)
+            succeeded += _sync_sources(database, sources, timeout, workers, progress, task)
     return succeeded, total - succeeded
