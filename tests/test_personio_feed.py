@@ -3,13 +3,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from jobsh.adapters.personio import normalize_feed, source, validated_positions
 from jobsh.discovery import discover
-from jobsh.adapters.personio import validated_positions, normalize_feed
 
 FIXTURES = Path(__file__).parents[1] / "testdata"
 
 
 class PersonioTest(unittest.TestCase):
+    def test_source_supports_both_personio_domains(self) -> None:
+        for domain in ("jobs.personio.de", "jobs.personio.com"):
+            self.assertEqual(
+                source(f"https://example.{domain}/job/1"),
+                ("example", f"https://example.{domain}/xml?language=de"),
+            )
+
     def test_normalization_preserves_fields_and_ignores_xml_formatting(self) -> None:
         for office, description, mode in (
             ("Berlin", "Remote und Hybrid", "hybrid"),

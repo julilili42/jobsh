@@ -4,28 +4,45 @@ Local job aggregator with full-text search and a read-only MCP server.
 
 ```bash
 uv sync
-uv run jobsh discovery --provider personio --limit 100
+uv run jobsh discovery --provider personio --limit 100 --collections 2
 uv run jobsh discovery --provider greenhouse --limit 100
 uv run jobsh discovery --provider ashby --limit 100
 uv run jobsh discovery --provider smartrecruiters --limit 100
 uv run jobsh discovery --provider dvinci --limit 100
 uv run jobsh discovery --provider lever --limit 100
+uv run jobsh discovery --provider recruitee --limit 100
+uv run jobsh discovery --provider workable --limit 100
+uv run jobsh discovery --provider workday --limit 100
+uv run jobsh source add jsonld https://example.com/jobs/42
 uv run jobsh sync
+uv run jobsh sync --limit 1000
 uv run jobsh search python --location Berlin --json
 uv run jobsh show 42 --json
+uv run jobsh stats --json
+uv run jobsh stats --errors
 ```
 
 Data is stored in `jobsh.db`. Use `--db PATH` before the command to select another
 database. Discovery and sync import public jobs from Personio, Greenhouse,
-Ashby, SmartRecruiters, d.vinci and Lever.
+Ashby, SmartRecruiters, d.vinci, Lever, Recruitee, Workable and Workday.
 Search includes all open jobs, regardless of occupation or country.
+`stats` reports open jobs, jobs refreshed within 24 hours and description coverage per provider.
 
-Ashby imports all listed jobs, including secondary locations and structured work
-modes, in one request per board. Unlisted jobs are excluded. SmartRecruiters
-paginates postings and downloads full descriptions with at most eight concurrent
-detail requests across all source workers. Discovery only checks its first list
-page. A failed detail request or inconsistent pagination fails the source import
-without marking stored jobs as missing.
+## Architecture
+
+Common Crawl → verified feeds → adapters → SQLite → CLI / MCP.
+
+- `discovery.py` finds feeds in bounded batches and resumes from the saved index position.
+- `adapters/` validates complete feeds and maps provider data to job records.
+- `sync.py` loads due sources in bounded batches, downloads with bounded workers and saves completed sources immediately.
+- `db.py` initializes SQLite and stores sources and jobs; `search.py` queries them.
+
+Each source import commits jobs, closure counters and its run report together.
+Failed imports preserve existing jobs. Two successful imports without a job close
+it; a returning job reopens with its original ID. Unchanged jobs avoid index writes.
+HTTP requests have time/size limits and respect `Retry-After` cooldowns.
+Transient discovery failures are retried after five minutes, invalid feeds after one day. Changed feeds run again
+after one hour, unchanged feeds after six; import failures use exponential backoff.
 
 ## MCP
 
@@ -58,7 +75,8 @@ replacing the absolute paths:
 - `get_job(id)` returns the full plain-text description, source URL and freshness/closure dates,
   including for closed jobs.
 
-Search uses SQLite FTS5 over titles and descriptions; words are combined with AND.
+Search uses SQLite FTS5 over titles and descriptions; long title/location filters use a separate trigram index.
+Words are combined with AND.
 C++, C# and .NET are matched literally. Title and location are substring filters;
 work mode accepts remote, hybrid, onsite or unknown. Location is source text and
 work mode comes from structured metadata where available, otherwise heuristics:
@@ -74,10 +92,10 @@ Existing jobs are preserved; legacy classification columns are ignored.
 
 Register an `Adapter` in `src/jobsh/adapters/__init__.py` with:
 
-- `domain`: the Common Crawl discovery domain.
+- `domains`: Common Crawl discovery domains; use `()` for manual-only adapters.
 - `source(url)`: extract `(provider_account, feed_url)`, or return `None`.
 - `fetch_records(url, timeout)`: validate and normalize the complete feed into job
-  dictionaries (see `adapters/personio.py` and `jobs.JOB_FIELDS`). Raise `ValueError`
+  dictionaries (see `adapters/personio.py` and `db.JOB_FIELDS`). Raise `ValueError`
   for invalid or incomplete feeds, and `OSError` for network errors. Only a
   successfully validated empty feed may return `[]`.
 - Optional `verify(url, timeout)`: a lightweight discovery check; otherwise

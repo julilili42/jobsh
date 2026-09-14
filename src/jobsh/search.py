@@ -37,10 +37,16 @@ def _filters(
     if terms:
         conditions.append("jobs_fts MATCH ?")
         parameters.append(" AND ".join(terms))
+    filter_terms = []
     for column, value in (("title", title), ("location_text", location)):
         if value:
             conditions.append(f"instr(lower(coalesce(j.{column}, '')), lower(?)) > 0")
             parameters.append(value)
+            if len(value) >= 3:
+                filter_terms.append(f'{column} : "{value.replace(chr(34), chr(34) * 2)}"')
+    if filter_terms:
+        conditions.append("jobs_filter_fts MATCH ?")
+        parameters.append(" AND ".join(filter_terms))
     if work_mode:
         conditions.append("j.work_mode = ?")
         parameters.append(work_mode)
@@ -56,7 +62,10 @@ def search(
         raise ValueError("title and location must be at most 1000 characters")
     conditions, parameters = _filters(query, title, location, work_mode)
     full_text = "jobs_fts MATCH ?" in conditions
+    filter_text = "jobs_filter_fts MATCH ?" in conditions
     join = " JOIN jobs_fts ON jobs_fts.rowid = j.id" if full_text else ""
+    if filter_text:
+        join += " JOIN jobs_filter_fts ON jobs_filter_fts.rowid = j.id"
     key = "jobs_fts.rowid" if full_text else "j.id"
     rows = database.execute(
         "SELECT " + SUMMARY + ", j.description" + SOURCE_JOIN + join + " WHERE " + " AND ".join(conditions)

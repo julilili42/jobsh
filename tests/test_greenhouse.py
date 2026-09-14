@@ -2,9 +2,9 @@ import json
 import unittest
 from unittest.mock import patch
 
-from jobsh.db import connect
 from jobsh.adapters.greenhouse import normalize_feed, source
-from jobsh.sources import register_source, sync
+from jobsh.db import connect, register_source
+from jobsh.sync import sync
 
 JOB = {"id": 42, "title": "Software Engineer", "absolute_url": "https://example.org/jobs/42",
        "location": {"name": "Remote, Germany"}, "content": "&lt;p&gt;Python&lt;/p&gt;",
@@ -47,6 +47,7 @@ class GreenhouseTest(unittest.TestCase):
         fetch.return_value = feed([JOB])
         self.assertEqual(sync(database, 3), (1, 0))
         self.assertEqual(database.execute("SELECT title FROM jobs").fetchone()[0], JOB["title"])
+        database.execute("UPDATE sources SET next_sync_at = NULL")
         fetch.return_value = b'{}'
         self.assertEqual(sync(database, 3), (0, 1))
         self.assertEqual(database.execute("SELECT missing_imports FROM jobs").fetchone()[0], 0)

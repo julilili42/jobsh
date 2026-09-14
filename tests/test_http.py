@@ -1,4 +1,6 @@
 import unittest
+from contextlib import contextmanager
+from threading import BoundedSemaphore, Event, Lock, Thread
 from unittest.mock import patch
 
 import httpx
@@ -7,6 +9,41 @@ from jobsh.http import _retry_at, fetch
 
 
 class HttpTest(unittest.TestCase):
+    @patch("jobsh.http.CLIENT.stream")
+    def test_request_limits_are_global_and_per_origin(self, stream):
+        active: dict[str, int] = {}
+        peak: dict[str, int] = {}
+        lock, full, release = Lock(), Event(), Event()
+
+        @contextmanager
+        def request(_, url, **__):
+            origin = url.split("/")[2]
+            with lock:
+                active[origin] = active.get(origin, 0) + 1
+                peak[origin] = max(peak.get(origin, 0), active[origin])
+                if sum(active.values()) == 3:
+                    full.set()
+            try:
+                release.wait(1)
+                yield httpx.Response(200, content=b"ok", request=httpx.Request("GET", url))
+            finally:
+                with lock:
+                    active[origin] -= 1
+
+        stream.side_effect = request
+        with patch("jobsh.http.REQUESTS", BoundedSemaphore(3)), \
+                patch("jobsh.http.ORIGIN_REQUESTS", 2), patch("jobsh.http._origin_requests", {}):
+            threads = [Thread(target=fetch, args=(f"https://{origin}/feed", 3))
+                       for origin in ("one.example", "one.example", "one.example", "two.example")]
+            for thread in threads:
+                thread.start()
+            self.assertTrue(full.wait(1))
+            release.set()
+            for thread in threads:
+                thread.join(1)
+                self.assertFalse(thread.is_alive())
+        self.assertEqual(peak, {"one.example": 2, "two.example": 1})
+
     @patch("jobsh.http.time.time", return_value=100)
     @patch("jobsh.http.CLIENT.stream")
     def test_rate_limits_are_host_specific_and_handle_header_edge_cases(self, stream, clock):
@@ -66,6 +103,13 @@ class HttpTest(unittest.TestCase):
         response.iter_bytes.assert_called_once_with(3)
 
     @patch("jobsh.http.CLIENT.stream")
+    def test_fetch_posts_json(self, stream) -> None:
+        response = stream.return_value.__enter__.return_value
+        response.iter_bytes.return_value = [b"ok"]
+        self.assertEqual(fetch("https://example.com", 3, json={"offset": 0}), b"ok")
+        stream.assert_called_once_with("POST", "https://example.com", timeout=3, json={"offset": 0})
+
+    @patch("jobsh.http.CLIENT.stream")
     def test_fetch_rejects_oversized_response(self, stream) -> None:
         stream.return_value.__enter__.return_value.iter_bytes.return_value = [b"too"]
 
@@ -73,6 +117,17 @@ class HttpTest(unittest.TestCase):
             fetch("https://example.com", timeout=3, limit=2)
 
     @patch("jobsh.http.CLIENT.stream", side_effect=httpx.ConnectError("offline"))
-    def test_fetch_exposes_http_errors_as_os_errors(self, _stream) -> None:
+    @patch("jobsh.http.time.sleep")
+    def test_fetch_retries_transport_errors(self, sleep, stream) -> None:
         with self.assertRaisesRegex(OSError, "offline"):
             fetch("https://example.com", timeout=3)
+        self.assertEqual(stream.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [.25, .5])
+
+    @patch("jobsh.http.CLIENT.stream", side_effect=httpx.ConnectError("[Errno 61] Connection refused"))
+    @patch("jobsh.http.time.sleep")
+    def test_fetch_leaves_connection_refusals_to_source_backoff(self, sleep, stream) -> None:
+        with self.assertRaisesRegex(OSError, "Connection refused"):
+            fetch("https://example.com", timeout=3)
+        stream.assert_called_once()
+        sleep.assert_not_called()

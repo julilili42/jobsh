@@ -1,13 +1,12 @@
 import json
 import unittest
 from contextlib import closing
-from threading import Barrier
 from unittest.mock import patch
 
 from jobsh.adapters import ADAPTERS, ashby, smartrecruiters
-from jobsh.db import connect
+from jobsh.db import connect, register_source
 from jobsh.discovery import discover
-from jobsh.sources import register_source, sync
+from jobsh.sync import sync
 
 
 def encoded(value):
@@ -65,26 +64,25 @@ class NewAdaptersTest(unittest.TestCase):
                 ashby.normalize_feed(encoded({"jobs": jobs}))
         self.assertEqual(ashby.normalize_feed(encoded({"jobs": []})), [])
 
-    def test_smartrecruiters_pagination_and_parallel_details(self):
-        barrier = Barrier(2)
-
-        def fetch(url, timeout):
-            if "offset=0" in url:
-                return encoded({"offset": 0, "totalFound": 3, "content": [{"id": "1"}, {"id": "2"}]})
-            if "offset=2" in url:
-                return encoded({"offset": 2, "totalFound": 3, "content": [{"id": "3", "releasedDate": "2026-09-11"}]})
-            job_id = url.rsplit("/", 1)[-1]
-            if job_id in ("1", "2"):
-                barrier.wait(timeout=3)
-            return encoded(SMART | {"id": job_id})
-
-        with patch("jobsh.adapters.smartrecruiters.fetch", side_effect=fetch):
+    def test_smartrecruiters_pagination(self):
+        first = [SMART | {"id": str(i)} for i in range(1, 101)]
+        pages = [
+            encoded({"offset": 0, "totalFound": 101, "content": first}),
+            encoded({"offset": 100, "totalFound": 101, "content": [SMART | {"id": "101", "releasedDate": "2026-09-11"}]}),
+        ]
+        with patch("jobsh.adapters.smartrecruiters.fetch", side_effect=pages) as fetch:
             records = smartrecruiters.fetch_records(SMART_URL, 3)
-        self.assertEqual([r["external_id"] for r in records], ["1", "2", "3"])
-        self.assertEqual(records[0]["description"], "Tasks\n<p>Python</p>")
+        self.assertEqual([r["external_id"] for r in records], [str(i) for i in range(1, 102)])
+        self.assertIsNone(records[0]["description"])
         self.assertEqual(records[0]["work_mode"], "remote")
         self.assertEqual(records[0]["location_text"], "Berlin, de")
-        self.assertEqual(records[2]["published_at"], "2026-09-11")
+        self.assertEqual(records[-1]["published_at"], "2026-09-11")
+        self.assertEqual(fetch.call_count, 2)
+        nullable = SMART | {"department": None, "typeOfEmployment": None}
+        with patch("jobsh.adapters.smartrecruiters.fetch", return_value=encoded(
+            {"offset": 0, "totalFound": 1, "content": [nullable]}
+        )):
+            self.assertEqual(smartrecruiters.fetch_records(SMART_URL, 3)[0]["source_category"], None)
         for page in ({}, {"offset": 0, "totalFound": 1, "content": []},
                      {"offset": 0, "totalFound": 1, "content": [{"id": "../x"}]},
                      {"offset": 0, "totalFound": 2, "content": [{"id": "1"}, {"id": "1"}]}):
@@ -92,13 +90,6 @@ class NewAdaptersTest(unittest.TestCase):
                 smartrecruiters.fetch_records(SMART_URL, 3)
         with patch("jobsh.adapters.smartrecruiters.fetch", return_value=encoded({"offset": 0, "totalFound": 0, "content": []})):
             self.assertEqual(smartrecruiters.fetch_records(SMART_URL, 3), [])
-        for second in ({"offset": 1, "totalFound": 3, "content": [{"id": "2"}]},
-                       {"offset": 1, "totalFound": 2, "content": [{"id": "1"}]},
-                       {"offset": 1, "totalFound": 2, "content": []}):
-            responses = [encoded({"offset": 0, "totalFound": 2, "content": [{"id": "1"}]}),
-                         encoded(SMART), encoded(second)]
-            with patch("jobsh.adapters.smartrecruiters.fetch", side_effect=responses), self.assertRaises(ValueError):
-                smartrecruiters.fetch_records(SMART_URL, 3)
 
     def test_failed_imports_preserve_jobs_for_both_providers(self):
         for provider in ("ashby", "smartrecruiters"):
@@ -106,13 +97,12 @@ class NewAdaptersTest(unittest.TestCase):
                 with database:
                     register_source(database, provider, "acme", SMART_URL if provider == "smartrecruiters" else "https://api.ashbyhq.com/posting-api/job-board/acme", "manual")
                 payloads = [encoded({"jobs": [ASHBY]})] if provider == "ashby" else [
-                    encoded({"offset": 0, "totalFound": 1, "content": [{"id": "1"}]}), encoded(SMART),
+                    encoded({"offset": 0, "totalFound": 1, "content": [SMART]}),
                 ]
                 with patch(f"jobsh.adapters.{provider}.fetch", side_effect=payloads):
                     self.assertEqual(sync(database, 3), (1, 0))
-                failures = [encoded({})] if provider == "ashby" else [
-                    encoded({"offset": 0, "totalFound": 1, "content": [{"id": "1"}]}), OSError("timeout"),
-                ]
+                database.execute("UPDATE sources SET next_sync_at = NULL")
+                failures = [encoded({})] if provider == "ashby" else [OSError("timeout")]
                 with patch(f"jobsh.adapters.{provider}.fetch", side_effect=failures):
                     self.assertEqual(sync(database, 3), (0, 1))
                 self.assertEqual(tuple(database.execute("SELECT missing_imports, closed_at FROM jobs").fetchone()), (0, None))

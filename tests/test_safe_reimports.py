@@ -1,13 +1,13 @@
 import tempfile
 import unittest
-from unittest.mock import Mock
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from jobsh.db import connect
-from jobsh.http import fetch as http_fetch
-from jobsh.sources import register_source, sync
 import httpx
+
+from jobsh.db import connect, register_source
+from jobsh.http import fetch as http_fetch
+from jobsh.sync import sync
 
 FEED_URL = "https://example.jobs.personio.de/xml?language=de"
 FEED = (Path(__file__).parents[1] / "testdata/personio.xml").read_bytes()
@@ -29,6 +29,7 @@ class SafeReimportsTest(unittest.TestCase):
         self.assertEqual(initial[0]["external_id"], initial[1]["external_id"])
         fetch.side_effect = lambda url, timeout: EMPTY if "alpha." in url else FEED
         for _ in range(2):
+            database.execute("UPDATE sources SET next_sync_at = NULL")
             self.assertEqual(sync(database, 3), (2, 0))
         jobs = database.execute("SELECT id, closed_at, missing_imports FROM jobs ORDER BY source_id").fetchall()
         self.assertIsNotNone(jobs[0]["closed_at"])
@@ -45,12 +46,14 @@ class SafeReimportsTest(unittest.TestCase):
             self.assertEqual(sync(database, 3), (1, 0))
         before = dict(database.execute("SELECT * FROM jobs").fetchone())
         source = dict(database.execute("SELECT * FROM sources").fetchone())
+        retries = []
 
         def interrupted():
             yield b"<workzag-jobs>"
             raise httpx.ReadTimeout("interrupted")
 
         for chunks in (interrupted(), iter([b"123456789012", b"123456789012"])):
+            database.execute("UPDATE sources SET next_sync_at = NULL")
             response = Mock()
             response.iter_bytes.return_value = chunks
             with patch("jobsh.http.CLIENT.stream") as stream, patch(
@@ -59,7 +62,15 @@ class SafeReimportsTest(unittest.TestCase):
                 stream.return_value.__enter__.return_value = response
                 self.assertEqual(sync(database, 3), (0, 1))
             self.assertEqual(dict(database.execute("SELECT * FROM jobs").fetchone()), before)
-            self.assertEqual(dict(database.execute("SELECT * FROM sources").fetchone()), source)
+            final_source = dict(database.execute("SELECT * FROM sources").fetchone())
+            self.assertEqual(
+                {key: value for key, value in final_source.items() if key not in {"next_sync_at", "failure_count"}},
+                {key: value for key, value in source.items() if key not in {"next_sync_at", "failure_count"}},
+            )
+            self.assertGreater(final_source["failure_count"], source["failure_count"])
+            retries.append(final_source["next_sync_at"])
+            source = final_source
+        self.assertGreater(retries[1], retries[0])
 
     def test_existing_database_is_upgraded_without_losing_jobs(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -70,6 +81,9 @@ class SafeReimportsTest(unittest.TestCase):
             with patch("jobsh.adapters.personio.fetch", return_value=FEED):
                 self.assertEqual(sync(database, 3), (1, 0))
             database.execute("ALTER TABLE jobs DROP COLUMN missing_imports")
+            database.execute("DROP INDEX sources_due")
+            database.execute("ALTER TABLE sources DROP COLUMN next_sync_at")
+            database.execute("ALTER TABLE sources DROP COLUMN failure_count")
             before = dict(database.execute("SELECT * FROM jobs").fetchone())
             database.close()
             for _ in range(2):
@@ -77,6 +91,12 @@ class SafeReimportsTest(unittest.TestCase):
                 self.assertEqual(
                     dict(database.execute("SELECT * FROM jobs").fetchone()),
                     before | {"missing_imports": 0},
+                )
+                self.assertEqual(
+                    tuple(database.execute(
+                        "SELECT next_sync_at, failure_count FROM sources"
+                    ).fetchone()),
+                    (None, 0),
                 )
                 database.close()
 
@@ -88,6 +108,7 @@ class SafeReimportsTest(unittest.TestCase):
             register_source(database, "personio", "example", FEED_URL, "manual")
 
         def run(data):
+            database.execute("UPDATE sources SET next_sync_at = NULL")
             fetch.side_effect = data if isinstance(data, Exception) else None
             fetch.return_value = data
             return sync(database, 3)
@@ -109,7 +130,10 @@ class SafeReimportsTest(unittest.TestCase):
         for failure in (TimeoutError("timeout"), b"<broken", invalid):
             self.assertEqual(run(failure), (0, 1))
             self.assertEqual(job(), before_failure)
-            self.assertEqual(dict(database.execute("SELECT * FROM sources").fetchone()), source)
+            failed_source = dict(database.execute("SELECT * FROM sources").fetchone())
+            self.assertEqual(failed_source["last_success_at"], source["last_success_at"])
+            self.assertGreater(failed_source["failure_count"], source["failure_count"])
+            source = failed_source
 
         # A returning job resets the count before it ever closes.
         self.assertEqual(run(changed), (1, 0))
@@ -136,7 +160,9 @@ class SafeReimportsTest(unittest.TestCase):
         )
         self.assertEqual(run(FEED), (0, 1))
         self.assertEqual(job(), before_failure)
-        self.assertEqual(dict(database.execute("SELECT * FROM sources").fetchone()), source)
+        failed_source = dict(database.execute("SELECT * FROM sources").fetchone())
+        self.assertEqual(failed_source["last_success_at"], source["last_success_at"])
+        self.assertEqual(failed_source["failure_count"], source["failure_count"] + 1)
         self.assertEqual(database.execute(
             "SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1"
         ).fetchone()["status"], "failed")

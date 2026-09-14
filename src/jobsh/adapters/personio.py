@@ -82,6 +82,6 @@ def fetch_records(feed_url: str, timeout: float) -> list[dict[str, str | None]]:
 def source(url: str) -> tuple[str, str] | None:
     host = urlsplit(url).hostname or ""
     account, _, domain = host.partition(".")
-    if account and domain == "jobs.personio.de":
+    if account and domain in ("jobs.personio.de", "jobs.personio.com"):
         return account, f"https://{host}/xml?language=de"
     return None

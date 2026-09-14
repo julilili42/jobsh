@@ -4,16 +4,14 @@ import sqlite3
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
-from contextlib import closing, redirect_stdout, redirect_stderr
+from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from jobsh.cli import main
-from jobsh.db import MIGRATION, connect
-from jobsh.jobs import save_jobs
 from jobsh.adapters.personio import normalize_feed
+from jobsh.cli import main
+from jobsh.db import MIGRATION, connect, register_source, save_jobs
 from jobsh.search import get_job, search
-from jobsh.sources import register_source
 
 SAMPLE = json.loads((Path(__file__).parents[1] / "testdata/search.json").read_text())
 URL = "https://example.jobs.personio.de/xml"
@@ -125,6 +123,18 @@ class SearchTest(unittest.TestCase):
             database.execute("DELETE FROM jobs WHERE id = 2")
             self.assertEqual(search(database, "Go")["jobs"], [])
 
+    def test_long_title_and_location_filters_follow_updates(self):
+        with closing(connect(":memory:")) as database:
+            seed(database)
+            self.assertEqual([job["id"] for job in search(database, title="Go Developer")["jobs"]], [2])
+            self.assertIn(2, [job["id"] for job in search(database, location="Berlin")["jobs"]])
+            database.execute("UPDATE jobs SET location_text = 'Munich, Germany' WHERE id = 2")
+            self.assertEqual([job["id"] for job in search(database, location="Munich")["jobs"]], [2])
+            self.assertNotIn(2, [job["id"] for job in search(database, location="Berlin")["jobs"]])
+            database.execute("UPDATE jobs SET title = 'Rust Developer' WHERE id = 2")
+            self.assertEqual(search(database, title="Go Developer")["jobs"], [])
+            self.assertEqual([job["id"] for job in search(database, title="Rust Developer")["jobs"]], [2])
+
     def test_cli_json_and_missing_ids(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "jobs.db"
@@ -139,9 +149,10 @@ class SearchTest(unittest.TestCase):
                 self.assertEqual(err.getvalue(), "")
             for command in (["show", "999", "--json"], ["show", "0"], ["search", "--limit", "101"], ["nonsense"]):
                 out, err = io.StringIO(), io.StringIO()
-                with patch("sys.argv", ["jobsh", "--db", str(path), *command]), redirect_stdout(out), redirect_stderr(err):
-                    with self.assertRaises(SystemExit) as error:
-                        main()
+                with patch("sys.argv", ["jobsh", "--db", str(path), *command]), \
+                        redirect_stdout(out), redirect_stderr(err), \
+                        self.assertRaises(SystemExit) as error:
+                    main()
                 self.assertNotEqual(error.exception.code, 0)
                 self.assertEqual(out.getvalue(), "")
                 self.assertTrue(err.getvalue())

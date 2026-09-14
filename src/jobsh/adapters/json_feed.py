@@ -17,7 +17,7 @@ def normalize(
     try:
         items = jobs(json.loads(data))
         if not isinstance(items, list):
-            raise ValueError(f"invalid or incomplete {name} jobs list")
+            raise ValueError(f"invalid or incomplete {name} jobs list")  # noqa: TRY004
         records, ids = [], set()
         for job in items:
             normalized = record(job)

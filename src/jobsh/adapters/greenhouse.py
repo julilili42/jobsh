@@ -22,8 +22,8 @@ def source(url: str) -> tuple[str, str] | None:
 def _record(job: dict) -> dict:
     location = job["location"]["name"]
     # ponytail: location-only heuristic; structured work-mode metadata when available.
-    mode = "hybrid" if re.search(r"\bhybrid\b", location, re.I) else (
-        "remote" if re.search(r"\bremote\b", location, re.I) else "unknown"
+    mode = "hybrid" if re.search(r"\bhybrid\b", location, re.IGNORECASE) else (
+        "remote" if re.search(r"\bremote\b", location, re.IGNORECASE) else "unknown"
     )
     return {
         "external_id": job["id"], "title": job["title"], "description": unescape(job["content"]),

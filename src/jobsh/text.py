@@ -38,7 +38,7 @@ def plain_text(value: str | None) -> str | None:
 def excerpt(value: str | None, query: str, limit: int = 320) -> str:
     text = " ".join((plain_text(value) or "").split())
     terms = [re.escape(term.strip('"')) for term in query.split() if term.strip('"')]
-    match = re.search("|".join(terms), text, re.I) if terms else None
+    match = re.search("|".join(terms), text, re.IGNORECASE) if terms else None
     start = max(0, match.start() - 80) if match else 0
     end = start + limit - (1 if start else 0)
     if end < len(text):

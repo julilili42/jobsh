@@ -1,6 +1,6 @@
 """Public Lever job boards on global and EU instances."""
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlencode, urlsplit
 
 from ..http import fetch
@@ -38,7 +38,7 @@ def _record(job: dict) -> dict:
         "employment_type": categories.get("commitment"),
         "source_category": categories.get("department") or categories.get("team"),
         "original_url": job["hostedUrl"],
-        "published_at": datetime.fromtimestamp(created / 1000, timezone.utc).isoformat() if created is not None else None,
+        "published_at": datetime.fromtimestamp(created / 1000, UTC).isoformat() if created is not None else None,
     }
 
 

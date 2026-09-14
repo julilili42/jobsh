@@ -1,14 +1,15 @@
 import tempfile
 import unittest
 from pathlib import Path
+from threading import Barrier, Event, Lock
+from time import sleep
 from types import SimpleNamespace
-from threading import Barrier, Event
 from unittest.mock import Mock, patch
 
-from jobsh.db import connect
-from jobsh.jobs import save_jobs
+import jobsh.sync as sync_module
 from jobsh.adapters.personio import normalize_feed
-from jobsh.sources import register_source, sync
+from jobsh.db import connect, register_source, save_jobs
+from jobsh.sync import sync
 
 FIXTURE = Path(__file__).parents[1] / "testdata" / "personio.xml"
 FEED_URL = "https://example.jobs.personio.de/xml?language=de"
@@ -21,9 +22,8 @@ class ManualImportTest(unittest.TestCase):
         saved = Event()
 
         def adapter(url, timeout):
-            if "slow" in url:
-                if not saved.wait(3):
-                    raise ValueError("fast source was not saved")
+            if "slow" in url and not saved.wait(3):
+                raise ValueError("fast source was not saved")
             return []
 
         database.create_function("notify_saved", 0, lambda: saved.set() or 0)
@@ -34,7 +34,7 @@ class ManualImportTest(unittest.TestCase):
         with database:
             for account in ("slow", "fast"):
                 register_source(database, "example", account, f"https://{account}.example", "manual")
-        with patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}):
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}):
             self.assertEqual(sync(database, 3, workers=2), (2, 0))
 
     def test_sync_fetches_sources_concurrently(self) -> None:
@@ -46,7 +46,7 @@ class ManualImportTest(unittest.TestCase):
             barrier.wait(timeout=1)
             return []
 
-        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
+        with database, patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
             for account in ("one", "two"):
                 register_source(database, "example", account, f"https://{account}.example", "manual")
             self.assertEqual(sync(database, 3, workers=2), (2, 0))
@@ -55,7 +55,7 @@ class ManualImportTest(unittest.TestCase):
         database = connect(":memory:")
         self.addCleanup(database.close)
         adapter = Mock(return_value=[])
-        with database, patch.dict("jobsh.sources.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
+        with database, patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
             register_source(database, "example", "account", "https://example.test/jobs", "manual")
             self.assertEqual(sync(database, 3), (1, 0))
         adapter.assert_called_once_with("https://example.test/jobs", 3)
@@ -112,6 +112,25 @@ class ManualImportTest(unittest.TestCase):
         self.assertEqual(final["last_seen_at"], "2026-09-03")
         for key, value in changed[0].items():
             self.assertEqual(final[key], value, key)
+        changed[0].update(description=None, content_hash="metadata-only")
+        self.assertEqual(save_jobs(database, source_id, changed, "2026-09-04"), (0, 1, 0))
+        self.assertEqual(database.execute("SELECT description FROM jobs").fetchone()[0], "New duties")
+
+    def test_reimport_batches_unchanged_jobs(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        register_source(database, "personio", "example", FEED_URL, "manual")
+        source_id = database.execute("SELECT id FROM sources").fetchone()["id"]
+        record, = normalize_feed(FIXTURE.read_bytes(), FEED_URL)
+        records = [record | {"external_id": str(index), "content_hash": str(index)} for index in range(501)]
+        self.assertEqual(save_jobs(database, source_id, records, "2026-09-01"), (501, 0, 0))
+        statements = []
+        database.set_trace_callback(statements.append)
+        self.assertEqual(save_jobs(database, source_id, records, "2026-09-02"), (0, 0, 501))
+        database.set_trace_callback(None)
+        self.assertEqual(
+            sum(statement.startswith("UPDATE jobs SET last_seen_at") for statement in statements), 2
+        )
 
     @patch("jobsh.adapters.personio.fetch")
     def test_reimport_keeps_the_job_and_updates_changed_content(self, fetch) -> None:
@@ -127,8 +146,10 @@ class ManualImportTest(unittest.TestCase):
 
             self.assertEqual(sync(database, 3), (1, 0))
             first = database.execute("SELECT id, title FROM jobs").fetchone()
+            database.execute("UPDATE sources SET next_sync_at = NULL")
             self.assertEqual(sync(database, 3), (1, 0))
             second = database.execute("SELECT id, title FROM jobs").fetchone()
+            database.execute("UPDATE sources SET next_sync_at = NULL")
             self.assertEqual(sync(database, 3), (1, 0))
             final = database.execute("SELECT id, title FROM jobs").fetchone()
 
@@ -144,6 +165,56 @@ class ManualImportTest(unittest.TestCase):
                 )],
                 [(1, 0, 0), (0, 0, 1), (0, 1, 0)],
             )
+
+    def test_sync_only_fetches_due_sources_and_limits_each_host(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        active = peak = calls = 0
+        lock = Lock()
+
+        def adapter(url, timeout):
+            nonlocal active, peak, calls
+            with lock:
+                active += 1
+                peak = max(peak, active)
+                calls += 1
+            sleep(.02)
+            with lock:
+                active -= 1
+            return []
+
+        with database:
+            for account in ("one", "two", "three"):
+                register_source(database, "example", account, f"https://example.test/{account}", "manual")
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}, clear=True):
+            self.assertEqual(sync(database, 3, workers=3), (3, 0))
+            self.assertEqual(sync(database, 3, workers=3), (0, 0))
+        self.assertEqual((calls, peak), (3, 3))
+
+    def test_sync_processes_due_sources_in_bounded_batches(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Mock(return_value=[])
+        with database:
+            for account in ("one", "two", "three", "four", "five"):
+                register_source(database, "example", account, f"https://{account}.example", "manual")
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}), \
+                patch("jobsh.sync.SOURCE_BATCH", 2), \
+                patch("jobsh.sync._sync_sources", wraps=sync_module._sync_sources) as batches:
+            self.assertEqual(sync(database, 3, workers=2), (5, 0))
+        self.assertEqual((adapter.call_count, batches.call_count), (5, 3))
+
+    def test_sync_limit_leaves_remaining_sources_due(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        adapter = Mock(return_value=[])
+        with database:
+            for account in ("one", "two", "three", "four", "five"):
+                register_source(database, "example", account, f"https://{account}.example", "manual")
+        with patch.dict("jobsh.sync.ADAPTERS", {"example": SimpleNamespace(fetch_records=adapter)}):
+            self.assertEqual(sync(database, 3, workers=2, limit=3), (3, 0))
+            self.assertEqual(sync(database, 3, workers=2), (2, 0))
+        self.assertEqual(adapter.call_count, 5)
 
 
 if __name__ == "__main__":
