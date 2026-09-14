@@ -24,7 +24,9 @@ uv run jobsh stats --errors
 
 Data is stored in `jobsh.db`. Use `--db PATH` before the command to select another
 database. Discovery and sync import public jobs from Personio, Greenhouse,
-Ashby, SmartRecruiters, d.vinci, Lever, Recruitee, Workable and Workday.
+Ashby, SmartRecruiters, d.vinci, Lever, Recruitee, Workable, Workday, Jobvite,
+onlyfy, softgarden, Teamtailor, SAP SuccessFactors, BambooHR and iCIMS.
+For a targeted refresh, use `uv run jobsh sync --provider NAME --limit 100`.
 Search includes all open jobs, regardless of occupation or country.
 `stats` reports open jobs, jobs refreshed within 24 hours and description coverage per provider.
 

@@ -34,7 +34,7 @@ def _source_add(args: argparse.Namespace) -> None:
 
 def _sync(args: argparse.Namespace) -> None:
     with closing(connect(args.db)) as database:
-        succeeded, failed = sync(database, args.timeout, args.workers, args.limit)
+        succeeded, failed = sync(database, args.timeout, args.workers, args.limit, args.provider)
     print(f"synced {succeeded} sources; {failed} failed", file=sys.stderr)
     if failed:
         raise OSError(f"{failed} source imports failed")
@@ -115,6 +115,7 @@ def _build_parser() -> argparse.ArgumentParser:
             command.add_argument("--collections", type=int, default=1, help="recent crawl collections to search")
         else:
             command.add_argument("--limit", type=int, default=0, help="maximum sources to import (0: all due)")
+            command.add_argument("--provider", choices=ADAPTERS, help="only import one provider")
 
     source = commands.add_parser("source", help="manage sources").add_subparsers(required=True)
     command = source.add_parser("add", help="register a public job URL")

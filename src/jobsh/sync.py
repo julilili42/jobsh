@@ -25,11 +25,14 @@ def _fetch_source(source: sqlite3.Row, timeout: float):
         return source_id, started_at, started, [], error
 
 
-def _due_sources(database: sqlite3.Connection, now: str, limit: int) -> list[sqlite3.Row]:
+def _due_sources(
+    database: sqlite3.Connection, now: str, limit: int, provider: str | None = None,
+) -> list[sqlite3.Row]:
+    provider_filter = " AND provider = ?" if provider else ""
     return database.execute(
         "SELECT id, provider, url FROM sources "
-        "WHERE next_sync_at IS NULL OR next_sync_at <= ? ORDER BY next_sync_at, id LIMIT ?",
-        (now, limit),
+        "WHERE (next_sync_at IS NULL OR next_sync_at <= ?)" + provider_filter + " ORDER BY next_sync_at, id LIMIT ?",
+        (now, provider, limit) if provider else (now, limit),
     ).fetchall()
 
 
@@ -71,13 +74,16 @@ def _sync_sources(
 
 def sync(
     database: sqlite3.Connection, timeout: float, workers: int = 32, limit: int = 0,
+    provider: str | None = None,
 ) -> tuple[int, int]:
     if timeout <= 0 or workers < 1 or limit < 0:
         raise ValueError("timeout and workers must be > 0; limit must be >= 0")
     now = datetime.now(UTC).isoformat()
     succeeded = total = 0
     while not limit or total < limit:
-        sources = _due_sources(database, now, min(SOURCE_BATCH, limit - total) if limit else SOURCE_BATCH)
+        sources = _due_sources(
+            database, now, min(SOURCE_BATCH, limit - total) if limit else SOURCE_BATCH, provider,
+        )
         if not sources:
             break
         total += len(sources)

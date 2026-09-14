@@ -216,6 +216,23 @@ class ManualImportTest(unittest.TestCase):
             self.assertEqual(sync(database, 3, workers=2), (2, 0))
         self.assertEqual(adapter.call_count, 5)
 
+    def test_sync_can_limit_to_one_provider(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        first = Mock(return_value=[])
+        second = Mock(return_value=[])
+        with database:
+            register_source(database, "first", "one", "https://one.example", "manual")
+            register_source(database, "second", "two", "https://two.example", "manual")
+        adapters = {
+            "first": SimpleNamespace(fetch_records=first),
+            "second": SimpleNamespace(fetch_records=second),
+        }
+        with patch.dict("jobsh.sync.ADAPTERS", adapters, clear=True):
+            self.assertEqual(sync(database, 3, provider="second"), (1, 0))
+        first.assert_not_called()
+        second.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
