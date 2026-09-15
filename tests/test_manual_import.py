@@ -2,13 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from threading import Barrier, Event, Lock
-from time import sleep
+from time import monotonic, sleep
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import jobsh.sync as sync_module
 from jobsh.adapters.personio import normalize_feed
-from jobsh.db import connect, register_source, save_jobs
+from jobsh.db import connect, register_source, save_jobs, save_source
 from jobsh.sync import sync
 
 FIXTURE = Path(__file__).parents[1] / "testdata" / "personio.xml"
@@ -16,6 +16,40 @@ FEED_URL = "https://example.jobs.personio.de/xml?language=de"
 
 
 class ManualImportTest(unittest.TestCase):
+    def test_jobvite_board_replaces_legacy_job_sources(self):
+        database = connect(":memory:")
+        self.addCleanup(database.close)
+        legacy = register_source(
+            database, "jobvite", "https://jobs.jobvite.com/acme/job/abc",
+            "https://jobs.jobvite.com/acme/job/abc", "manual",
+        )
+        missing = register_source(
+            database, "jobvite", "https://jobs.jobvite.com/acme/job/missing",
+            "https://jobs.jobvite.com/acme/job/missing", "manual",
+        )
+        board = register_source(database, "jobvite", "acme", "https://jobs.jobvite.com/acme", "manual")
+        records = [
+            {"external_id": job_id, "title": job_id, "description": None, "locations": "[]", "location_text": None,
+             "work_mode": "unknown", "employment_type": None, "source_category": None,
+             "original_url": f"https://jobs.jobvite.com/acme/job/{job_id}", "published_at": None,
+             "content_hash": job_id, "raw_record": job_id}
+            for job_id in ("abc", "new")
+        ]
+        save_jobs(database, legacy, records[:1], "2026-09-01")
+        save_jobs(database, missing, [records[0] | {"external_id": "missing"}], "2026-09-01")
+        self.assertTrue(save_source(database, board, "2026-09-02", monotonic(), records, None))
+        self.assertEqual(
+            database.execute(
+                "SELECT count(*) FROM jobs WHERE source_id IN (?, ?) AND closed_at IS NOT NULL", (legacy, missing),
+            ).fetchone()[0], 2,
+        )
+        self.assertEqual(database.execute("SELECT count(*) FROM jobs WHERE closed_at IS NULL").fetchone()[0], 2)
+        self.assertEqual(
+            database.execute(
+                "SELECT count(*) FROM sources WHERE id IN (?, ?) AND next_sync_at LIKE '9999%'", (legacy, missing),
+            ).fetchone()[0], 2,
+        )
+
     def test_sync_saves_completed_source_before_slow_source(self):
         database = connect(":memory:")
         self.addCleanup(database.close)

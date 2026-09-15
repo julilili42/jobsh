@@ -177,6 +177,30 @@ def save_jobs(
     return created, updated, len(unchanged)
 
 
+def _consolidate_jobvite_jobs(database: sqlite3.Connection, source_id: int, closed_at: str) -> None:
+    source = database.execute(
+        "SELECT provider, provider_account, url FROM sources WHERE id = ?", (source_id,),
+    ).fetchone()
+    if source is None or source["provider"] != "jobvite" or source["url"] != f"https://jobs.jobvite.com/{source['provider_account']}":
+        return
+    prefix = f"https://jobs.jobvite.com/{source['provider_account']}/job/"
+    legacy_sources = "provider = 'jobvite' AND id <> ? AND instr(replace(url, 'http://', 'https://'), ?) = 1"
+    database.execute(
+        """UPDATE jobs AS legacy SET closed_at = ?
+        WHERE legacy.closed_at IS NULL
+          AND legacy.source_id IN (
+              SELECT id FROM sources
+              WHERE """ + legacy_sources + """
+          )""",
+        (closed_at, source_id, prefix),
+    )
+    # ponytail: sentinel avoids a schema migration; add disabled_at if sources need re-enabling.
+    database.execute(
+        "UPDATE sources SET next_sync_at = '9999-12-31T23:59:59+00:00' WHERE " + legacy_sources,
+        (source_id, prefix),
+    )
+
+
 def _record_sync(
     database: sqlite3.Connection, source_id: int, started_at: str, finished_at: str,
     started: float, counts: tuple[int, int, int] = (0, 0, 0), error: Exception | None = None,
@@ -210,6 +234,7 @@ def save_source(
                 "WHERE source_id = ? AND closed_at IS NULL", (source_id,),
             )
             counts = save_jobs(database, source_id, records, finished_at)
+            _consolidate_jobvite_jobs(database, source_id, finished_at)
             database.execute(
                 "UPDATE jobs SET closed_at = ? "
                 "WHERE source_id = ? AND missing_imports >= 2 AND closed_at IS NULL",

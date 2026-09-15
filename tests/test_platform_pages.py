@@ -15,14 +15,16 @@ class PlatformPagesTest(unittest.TestCase):
         }
         for provider, url in cases.items():
             with self.subTest(provider=provider):
-                self.assertEqual(ADAPTERS[provider].source(url), (url, url))
+                expected = ("acme", "https://jobs.jobvite.com/acme") if provider == "jobvite" else (url, url)
+                self.assertEqual(ADAPTERS[provider].source(url), expected)
                 parsed = urlsplit(url)
                 invalid = f"https://example.invalid{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
                 self.assertIsNone(ADAPTERS[provider].source(invalid))
+                self.assertIsNone(ADAPTERS[provider].source(url.replace("https://", "https://attacker@")))
 
     def test_all_adapters_parse_public_jobposting(self):
         page = b'''<script type="application/ld+json">{"@type":"JobPosting","title":"Engineer","description":"Build","identifier":"123","url":"/jobs/123","jobLocation":{"address":{"addressLocality":"Berlin"}}}</script>'''
-        for provider in ("jobvite", "softgarden", "teamtailor"):
+        for provider in ("softgarden", "teamtailor"):
             with self.subTest(provider=provider):
                 with patch("jobsh.adapters.jsonld.fetch", return_value=page):
                     record, = ADAPTERS[provider].fetch_records("https://jobs.example/123", 1)
