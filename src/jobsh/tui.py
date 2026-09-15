@@ -5,8 +5,9 @@ from pathlib import Path
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Input, ListItem, ListView, Select, Static
+from textual.widgets import Button, Input, ListItem, ListView, Select, Static
 
 from .db import connect_readonly
 from .search import get_job, search
@@ -16,27 +17,68 @@ MODES = (("All work modes", ""), ("Remote", "remote"), ("Hybrid", "hybrid"),
          ("On-site", "onsite"), ("Unknown", "unknown"))
 
 
+class JobList(ListView):
+    """A result list with Vim navigation when it has focus."""
+
+    BINDINGS = ListView.BINDINGS + [
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+        Binding("g", "first_result", show=False),
+        Binding("G", "last_result", show=False),
+        Binding("ctrl+d", "page_down", show=False),
+        Binding("ctrl+u", "page_up", show=False),
+        Binding("l", "focus_detail", show=False),
+    ]
+
+    def action_first_result(self) -> None:
+        self.index = 0
+
+    def action_last_result(self) -> None:
+        self.index = len(self) - 1
+
+    def action_focus_detail(self) -> None:
+        self.app.query_one("#details-pane", VerticalScroll).focus()
+
+
+class JobDetails(VerticalScroll):
+    """Scrollable job details with Vim navigation when it has focus."""
+
+    BINDINGS = [
+        Binding("j", "scroll_down", show=False),
+        Binding("k", "scroll_up", show=False),
+        Binding("g", "scroll_home", show=False),
+        Binding("G", "scroll_end", show=False),
+        Binding("ctrl+d", "page_down", show=False),
+        Binding("ctrl+u", "page_up", show=False),
+        Binding("h", "focus_results", show=False),
+    ]
+
+    def action_focus_results(self) -> None:
+        self.app.query_one("#results", JobList).focus()
+
+
 class JobshApp(App[None]):
     """Search jobs without leaving the keyboard."""
 
     CSS = """
     Screen { background: $background; }
-    #topbar { height: 3; padding: 0 2; background: $surface; content-align: left middle; }
-    #brand { width: 12; text-style: bold; color: $accent; }
-    #subtitle { color: $text-muted; }
-    #filters { height: auto; padding: 1 2; layout: horizontal; background: $surface; }
+    #topbar { height: 2; padding: 0 2; background: $surface; content-align: left middle; }
+    #brand { width: 9; text-style: bold; color: $accent; }
+    #subtitle, #count { color: $text-muted; }
+    #count { width: 1fr; content-align: right middle; }
+    #filters { height: 3; padding: 0 2; layout: horizontal; background: $surface; border-bottom: solid $primary 10%; }
     Input { width: 1fr; margin-right: 1; }
     #query { width: 2fr; }
     Select { width: 24; margin-right: 1; }
     #shell { height: 1fr; layout: grid; grid-size: 2; grid-columns: 2fr 3fr; }
-    #results-pane { border-right: solid $primary 15%; }
+    #results-pane { border-right: solid $primary 10%; }
     #results-title, #details-title { height: 2; padding: 0 2; color: $text-muted; }
     ListView { height: 1fr; padding: 0 1; background: $background; }
-    ListItem { padding: 1 1; margin: 0 0 1 0; }
-    #more { width: 1fr; margin: 1; }
+    ListItem { padding: 1 1; margin: 0; border-bottom: solid $primary 5%; }
+    #more { width: 1fr; height: 1; margin: 0; border: none; background: $background; color: $text-muted; }
     #details-pane { height: 1fr; }
     #detail { height: auto; padding: 1 2; }
-    #status { height: 2; padding: 0 2; color: $text-muted; background: $surface; }
+    #status { height: 1; padding: 0 2; color: $text-muted; background: $surface; }
     """
     BINDINGS = [
         ("/", "focus_search", "Search"),
@@ -55,7 +97,9 @@ class JobshApp(App[None]):
         self.selected_id: int | None = None
 
     def compose(self) -> ComposeResult:
-        yield Horizontal(Static("jobsh", id="brand"), Static("Job search", id="subtitle"), id="topbar")
+        yield Horizontal(
+            Static("jobsh", id="brand"), Static("Search", id="subtitle"), Static("", id="count"), id="topbar",
+        )
         with Horizontal(id="filters"):
             yield Input(placeholder="Search jobs · Enter", id="query")
             yield Input(placeholder="Title", id="title")
@@ -64,13 +108,12 @@ class JobshApp(App[None]):
         with Horizontal(id="shell"):
             with Vertical(id="results-pane"):
                 yield Static("RESULTS", id="results-title")
-                yield ListView(id="results")
-                yield Button("Load more", id="more", variant="default")
-            with VerticalScroll(id="details-pane"):
+                yield JobList(id="results")
+                yield Button("n  Load more", id="more", variant="default")
+            with JobDetails(id="details-pane"):
                 yield Static("DETAIL", id="details-title")
                 yield Static("Search to browse open jobs.", id="detail")
-        yield Static("Press / to search · ↑ ↓ to browse · Enter to view · ? for help", id="status")
-        yield Footer()
+        yield Static("/ search · f filters · j/k browse · l detail · ? help", id="status")
 
     def on_mount(self) -> None:
         self._set_layout(self.size.width)
@@ -106,17 +149,22 @@ class JobshApp(App[None]):
         self.query_one("#query", Input).focus()
 
     def action_focus_filters(self) -> None:
-        self.query_one("#location", Input).focus()
+        self.query_one("#title", Input).focus()
 
     def action_focus_results(self) -> None:
-        self.query_one("#results", ListView).focus()
+        self.query_one("#results", JobList).focus()
 
     def action_load_more(self) -> None:
         if self.next_cursor is not None:
             self._start_search(append=True)
 
     def action_help(self) -> None:
-        self.notify("/ search · f filters · ↑↓ browse · Enter view · n load more · Esc results", title="Keyboard shortcuts")
+        self.notify(
+            "Filters: / search · f filters · Enter apply\n"
+            "Results: j/k move · g/G first/last · Ctrl-U/D page · l details\n"
+            "Details: j/k scroll · g/G top/bottom · h results · n more · Esc results",
+            title="Keyboard shortcuts",
+        )
 
     def _search_filters(self) -> tuple[str, str, str, str | None]:
         mode = self.query_one("#work-mode", Select).value
@@ -162,7 +210,7 @@ class JobshApp(App[None]):
         else:
             self.jobs = page["jobs"]
         self.next_cursor = page["next_cursor"]
-        results = self.query_one("#results", ListView)
+        results = self.query_one("#results", JobList)
         await results.clear()
         if version != self.search_version:
             return
@@ -170,10 +218,12 @@ class JobshApp(App[None]):
             await results.extend(self._result_item(job) for job in self.jobs)
             results.index = 0
             self.query_one("#status", Static).update(f"{len(self.jobs)} jobs loaded")
+            self.query_one("#count", Static).update(f"{len(self.jobs)} results")
         else:
             await results.append(ListItem(Static("No open jobs match these filters."), disabled=True))
             self.query_one("#detail", Static).update("Try a broader search or clear a filter.")
             self.query_one("#status", Static).update("No matching jobs")
+            self.query_one("#count", Static).update("")
         self.query_one("#more", Button).display = self.next_cursor is not None
 
     @staticmethod

@@ -23,7 +23,15 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(results.children)
                 self.assertEqual(app.selected_id, app.jobs[0]["id"])
                 self.assertIn(app.jobs[0]["title"], str(app.query_one("#detail").render()))
-                app.query_one("#title", Input).value = "Go Developer"
+                results.focus()
+                await pilot.press("j")
+                await pilot.pause(delay=0.1)
+                self.assertEqual(app.selected_id, app.jobs[1]["id"])
+                await pilot.press("g")
+                self.assertEqual(results.index, 0)
+                title = app.query_one("#title", Input)
+                title.value = "Go Developer"
+                title.focus()
                 await pilot.press("enter")
                 await pilot.pause(delay=0.1)
                 self.assertEqual([job["title"] for job in app.jobs], ["Go Developer"])
