@@ -55,6 +55,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
         database.executescript(
             "BEGIN IMMEDIATE;\n" + MIGRATION.with_name(migration).read_text() + "\nCOMMIT;"
         )
+    fts_sql = database.execute("SELECT sql FROM sqlite_master WHERE name = 'jobs_fts'").fetchone()[0]
+    if "remove_diacritics 0" not in fts_sql:
+        database.executescript("BEGIN IMMEDIATE;\n" + MIGRATION.with_name("004_strict_search.sql").read_text() + "\nCOMMIT;")
     return database
 
 

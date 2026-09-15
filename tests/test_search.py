@@ -123,6 +123,27 @@ class SearchTest(unittest.TestCase):
             database.execute("DELETE FROM jobs WHERE id = 2")
             self.assertEqual(search(database, "Go")["jobs"], [])
 
+    def test_full_text_search_keeps_umlauts_distinct(self):
+        with closing(connect(":memory:")) as database:
+            seed(database)
+            database.execute("UPDATE jobs SET title = 'Rüst Developer' WHERE id = 2")
+            self.assertEqual(search(database, "Rust")["jobs"], [])
+            self.assertEqual(search(database, "Rüst")["jobs"][0]["id"], 2)
+
+    def test_existing_full_text_index_becomes_diacritic_strict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.db"
+            old_fts = (MIGRATION.with_name("002_search.sql").read_text().replace(
+                "USING fts5(title, description, tokenize='unicode61 remove_diacritics 0');",
+                "USING fts5(title, description);",
+            ))
+            with closing(sqlite3.connect(path)) as database:
+                database.executescript(MIGRATION.read_text() + old_fts)
+            with closing(connect(path)) as database:
+                self.assertIn("remove_diacritics 0", database.execute(
+                    "SELECT sql FROM sqlite_master WHERE name = 'jobs_fts'"
+                ).fetchone()[0])
+
     def test_long_title_and_location_filters_follow_updates(self):
         with closing(connect(":memory:")) as database:
             seed(database)

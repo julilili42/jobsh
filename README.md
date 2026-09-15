@@ -97,10 +97,12 @@ Existing jobs are preserved; legacy classification columns are ignored.
 Run `uv run jobsh tui` to search and read jobs with the keyboard. The TUI uses the
 same database and filters as `jobsh search`; it searches as you type and supports
 text, title, location and work-mode filters. Press `/` to focus search, `f` to show
-filters, `Esc` to clear or return to results, `j`/`k` to browse,
+filters, `Esc` to return to results without clearing the query, `j`/`k` to browse,
 `g`/`G` for the first or last result, `Enter` or `l` for details, `h` to return,
-`n` to load more results and `u` to rediscover feeds or sync due sources. Narrow
+`n` to load more results, `o` to open the job website and `u` to refresh a provider.
+Refresh combines rediscovery with its due-source sync. Narrow
 terminals stack the filter controls vertically.
+The TUI uses the terminal font; JetBrainsMono Nerd Font is a good optional choice.
 It works over SSH with `ssh -t server 'cd /path/to/jobsh && uv run jobsh tui'`.
 
 ## Adding a provider

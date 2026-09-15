@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import ANY, patch
 
 from jobsh.db import connect
 from jobsh.tui import JobshApp
@@ -32,8 +33,23 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.selected_id, app.jobs[1]["id"])
                 self.assertTrue(app.query_one("#details-pane").display)
                 self.assertIn(app.jobs[1]["title"], str(app.query_one("#detail").render()))
-                await pilot.press("h")
+                with patch("jobsh.tui.webbrowser.open", return_value=True) as open_url:
+                    await pilot.press("o")
+                open_url.assert_called_once_with(app.jobs[1]["original_url"])
+                await pilot.press("l")
                 self.assertFalse(app.query_one("#details-pane").display)
+                await pilot.press("enter")
+                self.assertTrue(app.query_one("#details-pane").display)
+                await pilot.press("enter")
+                self.assertFalse(app.query_one("#details-pane").display)
+                query = app.query_one("#query", Input)
+                query.value = "Rust"
+                query.focus()
+                await pilot.press("escape")
+                self.assertEqual(query.value, "Rust")
+                self.assertIs(app.focused, results)
+                query.value = ""
+                await pilot.pause(delay=0.2)
                 await pilot.press("g")
                 self.assertEqual(results.index, 0)
                 await pilot.press("f")
@@ -46,7 +62,8 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(delay=0.2)
                 self.assertEqual([job["title"] for job in app.jobs], ["Go Developer"])
                 await pilot.press("escape")
-                self.assertEqual(title.value, "")
+                self.assertEqual(title.value, "Go Developer")
+                self.assertIs(app.focused, results)
 
     async def test_filters_stack_on_a_narrow_terminal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -61,6 +78,31 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 filters = app.query_one("#filters")
                 self.assertTrue(filters.display)
                 self.assertEqual(filters.styles.height.value, 9)
+                app.query_one("#results").focus()
+                await pilot.press("u")
+                self.assertTrue(app.query_one("#updates").display)
+                self.assertIsNotNone(app.query_one("#refresh"))
+
+    async def test_refresh_rediscovers_then_syncs_the_selected_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.db"
+            with closing(connect(path)) as database, database:
+                seed(database)
+            app = JobshApp(path)
+            async with app.run_test() as pilot:
+                await pilot.pause(delay=0.1)
+                provider = str(app.query_one("#provider").value)
+                with patch("jobsh.tui.discover", return_value=[]) as rediscover, \
+                        patch("jobsh.tui.sync", return_value=(0, 0)) as sync_due:
+                    app.action_refresh()
+                    await pilot.pause(delay=0.1)
+                rediscover.assert_called_once_with(
+                    provider, limit=100, workers=8, timeout=15, database=ANY,
+                    show_progress=False, report=False,
+                )
+                sync_due.assert_called_once_with(
+                    ANY, timeout=15, workers=16, provider=provider, show_progress=False,
+                )
 
 
 if __name__ == "__main__":
