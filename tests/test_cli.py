@@ -100,6 +100,8 @@ class CliTest(unittest.TestCase):
         self.assertEqual(sync.db, Path("jobsh.db"))
         self.assertEqual((sync.workers, sync.timeout, sync.limit), (32, 4, 0))
 
+        self.assertEqual(_build_parser().parse_args(["tui"]).command, "tui")
+
     def test_source_add_derives_and_registers_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "jobs.db"

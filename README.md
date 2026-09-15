@@ -20,6 +20,7 @@ uv run jobsh search python --location Berlin --json
 uv run jobsh show 42 --json
 uv run jobsh stats --json
 uv run jobsh stats --errors
+uv run jobsh tui
 ```
 
 Data is stored in `jobsh.db`. Use `--db PATH` before the command to select another
@@ -90,6 +91,14 @@ deep offsets or full result counts. CLI JSON uses the same page format; continue
 with `--cursor ID`. Pagination sees live data, so a concurrent sync may change results.
 MCP tools use separate read-only connections; WAL allows searches during sync.
 Existing jobs are preserved; legacy classification columns are ignored.
+
+## Terminal UI
+
+Run `uv run jobsh tui` to search and read jobs with the keyboard. The TUI uses the
+same database and filters as `jobsh search`; it supports text, title, location and
+work-mode filters. Press `/` to focus search, `f` for filters, arrow keys to browse,
+`n` to load more results and `?` for shortcuts.
+It works over SSH with `ssh -t server 'cd /path/to/jobsh && uv run jobsh tui'`.
 
 ## Adding a provider
 

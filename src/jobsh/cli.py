@@ -94,6 +94,12 @@ def _serve(args: argparse.Namespace) -> None:
     serve(args.db)
 
 
+def _tui(args: argparse.Namespace) -> None:
+    from .tui import run
+
+    run(args.db)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jobsh")
     parser.add_argument("--db", type=Path, default=Path("jobsh.db"))
@@ -145,6 +151,8 @@ def _build_parser() -> argparse.ArgumentParser:
     command.add_argument("--errors", action="store_true", help="rank discovery failures")
     command = commands.add_parser("serve", help="run the local MCP server over stdio")
     command.set_defaults(run=_serve)
+    command = commands.add_parser("tui", help="search jobs in an interactive terminal UI")
+    command.set_defaults(run=_tui)
     return parser
 
 
