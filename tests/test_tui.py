@@ -4,8 +4,8 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import ANY, patch
 
-from jobsh.db import connect
-from jobsh.tui import JobshApp
+from jobsh.db import connect, connect_readonly
+from jobsh.tui import JobshApp, run
 from textual.widgets import Input
 
 from tests.test_search import seed
@@ -28,6 +28,9 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause(delay=0.25)
                 self.assertEqual(results.index, 1)
                 self.assertIsNone(app.selected_id)
+                with patch("jobsh.tui.webbrowser.open", return_value=True) as open_url:
+                    await pilot.press("o")
+                open_url.assert_called_once_with(app.jobs[1]["original_url"])
                 await pilot.press("enter")
                 await pilot.pause(delay=0.1)
                 self.assertEqual(app.selected_id, app.jobs[1]["id"])
@@ -64,6 +67,22 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("escape")
                 self.assertEqual(title.value, "Go Developer")
                 self.assertIs(app.focused, results)
+
+    async def test_load_more_keeps_the_selected_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.db"
+            with closing(connect(path)) as database, database:
+                seed(database)
+            app = JobshApp(path)
+            async with app.run_test() as pilot:
+                await pilot.pause(delay=0.1)
+                results = app.query_one("#results")
+                results.index = 1
+                count = len(app.jobs)
+                job = app.jobs[0] | {"id": 999}
+                await app._show_results(app.search_version, {"jobs": [job], "next_cursor": None}, True)
+                self.assertEqual(len(app.jobs), count + 1)
+                self.assertEqual(results.index, 1)
 
     async def test_filters_stack_on_a_narrow_terminal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -103,6 +122,17 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 sync_due.assert_called_once_with(
                     ANY, timeout=15, workers=16, provider=provider, show_progress=False,
                 )
+
+    def test_tui_startup_runs_database_migrations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.db"
+            with patch.object(JobshApp, "run") as app_run:
+                run(path)
+            app_run.assert_called_once()
+            with closing(connect_readonly(path)) as database:
+                self.assertIn("remove_diacritics 0", database.execute(
+                    "SELECT sql FROM sqlite_master WHERE name = 'jobs_fts'"
+                ).fetchone()[0])
 
 
 if __name__ == "__main__":

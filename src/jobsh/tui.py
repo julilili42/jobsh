@@ -43,6 +43,7 @@ class JobList(ListView):
         Binding("ctrl+d", "page_down", show=False),
         Binding("ctrl+u", "page_up", show=False),
         Binding("l", "open_details", show=False),
+        Binding("o", "open_url", show=False),
     ]
 
     def action_first_result(self) -> None:
@@ -53,6 +54,9 @@ class JobList(ListView):
 
     def action_open_details(self) -> None:
         self.app.action_open_details()
+
+    def action_open_url(self) -> None:
+        self.app.action_open_url()
 
 
 class JobDetails(VerticalScroll):
@@ -91,14 +95,15 @@ class JobshApp(App[None]):
     #count { width: 1fr; content-align: right middle; }
     #query { width: 1fr; }
     #filters, #updates { height: 3; padding: 0 2; layout: horizontal; background: $surface; border-bottom: solid $primary 10%; }
-    Input { width: 1fr; margin-right: 1; border: none; background: transparent; }
+    Input { width: 30; margin-right: 1; border: none; background: transparent; }
     Input:focus { border-bottom: tall $accent; }
-    Select { width: 24; margin-right: 1; }
+    Select { width: 20; margin-right: 1; border: none; background: transparent; }
+    Select:focus { border-bottom: tall $accent; }
     #updates Button { margin-right: 1; }
     #shell { height: 1fr; layout: grid; grid-size: 2; grid-columns: 2fr 3fr; }
     #results-pane { border-right: solid $primary 10%; }
     ListView { height: 1fr; padding: 0 1; background: $background; }
-    ListItem { padding: 0 1; margin: 0; border-bottom: solid $primary 5%; }
+    ListItem { padding: 0 1; margin: 0; }
     #more { width: 1fr; height: 1; margin: 0; border: none; background: $background; color: $text-muted; }
     #details-pane { height: 1fr; }
     #detail { height: auto; padding: 1 2; }
@@ -173,13 +178,16 @@ class JobshApp(App[None]):
         narrow = width < 70
         toolbar.styles.layout = "vertical" if narrow else "horizontal"
         toolbar.styles.height = 9 if narrow else 3
+        toolbar.styles.width = "1fr" if narrow else (88 if selector == "#filters" else 40)
         for child in toolbar.children:
             child.styles.width = "1fr" if narrow else None
         if not narrow:
             if selector == "#filters":
-                self.query_one("#work-mode", Select).styles.width = 24
+                self.query_one("#title", Input).styles.width = 30
+                self.query_one("#location", Input).styles.width = 30
+                self.query_one("#work-mode", Select).styles.width = 20
             else:
-                self.query_one("#provider", Select).styles.width = 24
+                self.query_one("#provider", Select).styles.width = 20
                 self.query_one("#refresh", Button).styles.width = "auto"
 
     def on_input_submitted(self, _: Input.Submitted) -> None:
@@ -272,9 +280,15 @@ class JobshApp(App[None]):
         self.query_one("#results", JobList).focus()
 
     def action_open_url(self) -> None:
-        if self.selected_url and webbrowser.open(self.selected_url):
-            self.query_one("#status", Static).update("Opened website · Enter/l back")
-        elif self.selected_url:
+        url = self.selected_url
+        if url is None:
+            selected = self.query_one("#results", JobList).highlighted_child
+            if selected is not None and selected.id is not None:
+                job_id = int(selected.id.removeprefix("job-"))
+                url = next((job["original_url"] for job in self.jobs if job["id"] == job_id), None)
+        if url and webbrowser.open(url):
+            self.query_one("#status", Static).update("Opened website" if not self.details_open else "Opened website · Enter/l back")
+        elif url:
             self.query_one("#status", Static).update("Could not open website")
 
     def action_load_more(self) -> None:
@@ -331,18 +345,23 @@ class JobshApp(App[None]):
     async def _show_results(self, version: int, page: dict, append: bool) -> None:
         if version != self.search_version:
             return
+        new_jobs = page["jobs"]
         if append:
-            self.jobs.extend(page["jobs"])
+            self.jobs.extend(new_jobs)
         else:
-            self.jobs = page["jobs"]
+            self.jobs = new_jobs
         self.next_cursor = page["next_cursor"]
         results = self.query_one("#results", JobList)
-        await results.clear()
         if version != self.search_version:
             return
+        if not append:
+            await results.clear()
         if self.jobs:
-            await results.extend(self._result_item(job) for job in self.jobs)
-            results.index = 0
+            if append:
+                await results.extend(self._result_item(job) for job in new_jobs)
+            else:
+                await results.extend(self._result_item(job) for job in self.jobs)
+                results.index = 0
             self.query_one("#status", Static).update("j/k navigate · Enter details · u refresh · ? help")
             self.query_one("#count", Static).update(f"{len(self.jobs)} results")
         else:
@@ -433,4 +452,6 @@ class JobshApp(App[None]):
 
 def run(database_path: Path) -> None:
     """Start the interactive application."""
+    with closing(connect(database_path)):
+        pass
     JobshApp(database_path).run()
