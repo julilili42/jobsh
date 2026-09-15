@@ -10,12 +10,16 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.timer import Timer
 from textual.widgets import Button, Input, ListItem, ListView, Select, Static
 
-from .db import connect_readonly
+from .adapters import ADAPTERS
+from .db import connect, connect_readonly
+from .discovery import discover
 from .search import get_job, search
+from .sync import sync
 
 
 MODES = (("All work modes", ""), ("Remote", "remote"), ("Hybrid", "hybrid"),
          ("On-site", "onsite"), ("Unknown", "unknown"))
+DISCOVERY_PROVIDERS = tuple((name.title(), name) for name, adapter in ADAPTERS.items() if adapter.domains)
 
 
 class SearchInput(Input):
@@ -40,7 +44,7 @@ class JobList(ListView):
         Binding("G", "last_result", show=False),
         Binding("ctrl+d", "page_down", show=False),
         Binding("ctrl+u", "page_up", show=False),
-        Binding("l", "focus_detail", show=False),
+        Binding("l", "open_details", show=False),
     ]
 
     def action_first_result(self) -> None:
@@ -49,8 +53,8 @@ class JobList(ListView):
     def action_last_result(self) -> None:
         self.index = len(self) - 1
 
-    def action_focus_detail(self) -> None:
-        self.app.query_one("#details-pane", VerticalScroll).focus()
+    def action_open_details(self) -> None:
+        self.app.action_open_details()
 
 
 class JobDetails(VerticalScroll):
@@ -63,11 +67,12 @@ class JobDetails(VerticalScroll):
         Binding("G", "scroll_end", show=False),
         Binding("ctrl+d", "page_down", show=False),
         Binding("ctrl+u", "page_up", show=False),
-        Binding("h", "focus_results", show=False),
+        Binding("h", "close_details", show=False),
+        Binding("escape", "close_details", show=False),
     ]
 
-    def action_focus_results(self) -> None:
-        self.app.query_one("#results", JobList).focus()
+    def action_close_details(self) -> None:
+        self.app.action_close_details()
 
 
 class JobshApp(App[None]):
@@ -81,11 +86,11 @@ class JobshApp(App[None]):
     #count { color: $text-muted; }
     #count { width: 1fr; content-align: right middle; }
     #query { width: 1fr; }
-    #filters { height: 3; padding: 0 2; layout: horizontal; background: $surface; border-bottom: solid $primary 10%; }
-    #filter-label { width: 9; color: $text-muted; content-align: left middle; }
+    #filters, #updates { height: 3; padding: 0 2; layout: horizontal; background: $surface; border-bottom: solid $primary 10%; }
     Input { width: 1fr; margin-right: 1; border: none; background: transparent; }
     Input:focus { border-bottom: tall $accent; }
     Select { width: 24; margin-right: 1; }
+    #updates Button { margin-right: 1; }
     #shell { height: 1fr; layout: grid; grid-size: 2; grid-columns: 2fr 3fr; }
     #results-pane { border-right: solid $primary 10%; }
     ListView { height: 1fr; padding: 0 1; background: $background; }
@@ -98,6 +103,7 @@ class JobshApp(App[None]):
     BINDINGS = [
         ("/", "focus_search", "Search"),
         ("f", "toggle_filters", "Filters"),
+        ("u", "toggle_updates", "Updates"),
         ("n", "load_more", "More"),
         ("escape", "focus_results", "Results"),
         ("question_mark", "help", "Help"),
@@ -112,6 +118,7 @@ class JobshApp(App[None]):
         self.selected_id: int | None = None
         self.search_timer: Timer | None = None
         self.work_mode = ""
+        self.details_open = False
 
     def compose(self) -> ComposeResult:
         yield Horizontal(
@@ -119,21 +126,25 @@ class JobshApp(App[None]):
             SearchInput(placeholder="Search jobs", id="query"), Static("", id="count"), id="topbar",
         )
         with Horizontal(id="filters"):
-            yield Static("Filters", id="filter-label")
             yield SearchInput(placeholder="Title", id="title")
             yield SearchInput(placeholder="Location", id="location")
             yield Select(MODES, value="", id="work-mode")
+        with Horizontal(id="updates"):
+            yield Select(DISCOVERY_PROVIDERS, value=DISCOVERY_PROVIDERS[0][1], id="provider")
+            yield Button("Rediscover", id="discover", variant="default")
+            yield Button("Sync due", id="sync", variant="primary")
         with Horizontal(id="shell"):
             with Vertical(id="results-pane"):
                 yield JobList(id="results")
                 yield Button("n  Load more", id="more", variant="default")
             with JobDetails(id="details-pane"):
                 yield Static("Search to browse open jobs.", id="detail")
-        yield Static("/ search · f filters · j/k navigate · l preview · ? help", id="status")
+        yield Static("/ search · f filters · u updates · j/k navigate · Enter details · ? help", id="status")
 
     def on_mount(self) -> None:
         self._set_layout(self.size.width)
         self.query_one("#filters").display = False
+        self.query_one("#updates").display = False
         self.query_one("#query", Input).focus()
         self._start_search()
 
@@ -143,10 +154,30 @@ class JobshApp(App[None]):
     def _set_layout(self, width: int) -> None:
         shell = self.query_one("#shell")
         results = self.query_one("#results-pane")
+        details = self.query_one("#details-pane")
         narrow = width < 90
-        shell.styles.grid_size_columns = 1 if narrow else 2
-        shell.styles.grid_columns = "1fr" if narrow else "2fr 3fr"
-        results.styles.height = 14 if narrow else "1fr"
+        results.display = not self.details_open or not narrow
+        details.display = self.details_open
+        shell.styles.grid_size_columns = 2 if self.details_open and not narrow else 1
+        shell.styles.grid_columns = "2fr 3fr" if self.details_open and not narrow else "1fr"
+        results.styles.height = "1fr"
+        self._set_toolbar_layout("#filters", width)
+        self._set_toolbar_layout("#updates", width)
+
+    def _set_toolbar_layout(self, selector: str, width: int) -> None:
+        toolbar = self.query_one(selector, Horizontal)
+        narrow = width < 70
+        toolbar.styles.layout = "vertical" if narrow else "horizontal"
+        toolbar.styles.height = 9 if narrow else 3
+        for child in toolbar.children:
+            child.styles.width = "1fr" if narrow else None
+        if not narrow:
+            if selector == "#filters":
+                self.query_one("#work-mode", Select).styles.width = 24
+            else:
+                self.query_one("#provider", Select).styles.width = 24
+                self.query_one("#discover", Button).styles.width = "auto"
+                self.query_one("#sync", Button).styles.width = "auto"
 
     def on_input_submitted(self, _: Input.Submitted) -> None:
         self._cancel_scheduled_search()
@@ -156,6 +187,8 @@ class JobshApp(App[None]):
         self._schedule_search()
 
     def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "work-mode":
+            return
         if str(event.value) == self.work_mode:
             return
         self.work_mode = str(event.value)
@@ -164,19 +197,37 @@ class JobshApp(App[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "more":
             self.action_load_more()
+        elif event.button.id == "discover":
+            self.action_discover()
+        elif event.button.id == "sync":
+            self.action_sync()
 
-    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.item is not None and event.item.id:
-            self._start_detail(int(event.item.id.removeprefix("job-")))
+            self.action_open_details()
 
     def action_focus_search(self) -> None:
         self.query_one("#query", Input).focus()
 
     def action_toggle_filters(self) -> None:
         filters = self.query_one("#filters")
+        self.query_one("#updates").display = False
+        self.details_open = False
+        self._set_layout(self.size.width)
         filters.display = not filters.display
         if filters.display:
             self.query_one("#title", Input).focus()
+        else:
+            self.action_focus_results()
+
+    def action_toggle_updates(self) -> None:
+        updates = self.query_one("#updates")
+        self.query_one("#filters").display = False
+        self.details_open = False
+        self._set_layout(self.size.width)
+        updates.display = not updates.display
+        if updates.display:
+            self.query_one("#provider", Select).focus()
         else:
             self.action_focus_results()
 
@@ -196,6 +247,26 @@ class JobshApp(App[None]):
     def action_focus_results(self) -> None:
         if self.query_one("#filters").display:
             self.query_one("#filters").display = False
+        if self.query_one("#updates").display:
+            self.query_one("#updates").display = False
+        if self.details_open:
+            self.action_close_details()
+            return
+        self.query_one("#results", JobList).focus()
+
+    def action_open_details(self) -> None:
+        result = self.query_one("#results", JobList).highlighted_child
+        if result is None or result.id is None:
+            return
+        self.details_open = True
+        self._set_layout(self.size.width)
+        self.query_one("#details-pane", JobDetails).focus()
+        self._start_detail(int(result.id.removeprefix("job-")))
+
+    def action_close_details(self) -> None:
+        self.details_open = False
+        self.selected_id = None
+        self._set_layout(self.size.width)
         self.query_one("#results", JobList).focus()
 
     def action_load_more(self) -> None:
@@ -205,8 +276,8 @@ class JobshApp(App[None]):
     def action_help(self) -> None:
         self.notify(
             "Search: / focus · Enter apply · f show or hide filters\n"
-            "Results: j/k move · g/G first/last · Ctrl-U/D page · l details\n"
-            "Details: j/k scroll · g/G top/bottom · h results · n more · Esc results",
+            "Results: j/k move · g/G first/last · Ctrl-U/D page · Enter/l details · n more\n"
+            "Details: j/k scroll · g/G top/bottom · h/Esc back · u updates",
             title="Keyboard shortcuts",
         )
 
@@ -223,6 +294,8 @@ class JobshApp(App[None]):
         if not append:
             self.search_version += 1
             self.selected_id = None
+            self.details_open = False
+            self._set_layout(self.size.width)
         query, title, location, mode = self._search_filters()
         cursor = self.next_cursor if append else 0
         if cursor is None:
@@ -261,7 +334,7 @@ class JobshApp(App[None]):
         if self.jobs:
             await results.extend(self._result_item(job) for job in self.jobs)
             results.index = 0
-            self.query_one("#status", Static).update("j/k navigate · l preview · n more · ? help")
+            self.query_one("#status", Static).update("j/k navigate · Enter details · u updates · ? help")
             self.query_one("#count", Static).update(f"{len(self.jobs)} results")
         else:
             await results.append(ListItem(Static("No open jobs match these filters."), disabled=True))
@@ -281,6 +354,61 @@ class JobshApp(App[None]):
         self.selected_id = job_id
         self.query_one("#detail", Static).update("Loading job…")
         self._load_detail(job_id)
+
+    def action_sync(self) -> None:
+        self._start_update("Syncing due sources…")
+        self._sync_due()
+
+    def action_discover(self) -> None:
+        provider = str(self.query_one("#provider", Select).value)
+        self._start_update(f"Rediscovering {provider} feeds…")
+        self._discover(provider)
+
+    def _start_update(self, message: str) -> None:
+        self.query_one("#updates").display = False
+        self.query_one("#discover", Button).disabled = True
+        self.query_one("#sync", Button).disabled = True
+        self.query_one("#status", Static).update(message)
+
+    @work(thread=True, exclusive=True, group="update")
+    def _sync_due(self) -> None:
+        try:
+            with closing(connect(self.database_path)) as database:
+                succeeded, failed = sync(database, timeout=15, workers=16, show_progress=False)
+        except Exception as error:  # Network and SQLite errors are displayed in the TUI.
+            self.call_from_thread(self._show_update_error, str(error))
+        else:
+            self.call_from_thread(self._show_sync_result, succeeded, failed)
+
+    @work(thread=True, exclusive=True, group="update")
+    def _discover(self, provider: str) -> None:
+        try:
+            with closing(connect(self.database_path)) as database:
+                feeds = discover(
+                    provider, limit=100, workers=8, timeout=15, database=database,
+                    show_progress=False, report=False,
+                )
+        except Exception as error:  # Network and SQLite errors are displayed in the TUI.
+            self.call_from_thread(self._show_update_error, str(error))
+        else:
+            self.call_from_thread(self._show_discovery_result, provider, len(feeds))
+
+    def _finish_update(self) -> None:
+        self.query_one("#discover", Button).disabled = False
+        self.query_one("#sync", Button).disabled = False
+
+    def _show_update_error(self, error: str) -> None:
+        self._finish_update()
+        self.query_one("#status", Static).update(f"Update failed: {error}")
+
+    def _show_sync_result(self, succeeded: int, failed: int) -> None:
+        self._finish_update()
+        self.query_one("#status", Static).update(f"Synced {succeeded} sources; {failed} failed · results refreshed")
+        self._start_search()
+
+    def _show_discovery_result(self, provider: str, count: int) -> None:
+        self._finish_update()
+        self.query_one("#status", Static).update(f"Verified {count} {provider} feeds · use u to sync due sources")
 
     @work(thread=True, exclusive=True, group="detail")
     def _load_detail(self, job_id: int) -> None:

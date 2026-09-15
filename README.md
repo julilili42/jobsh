@@ -98,8 +98,9 @@ Run `uv run jobsh tui` to search and read jobs with the keyboard. The TUI uses t
 same database and filters as `jobsh search`; it searches as you type and supports
 text, title, location and work-mode filters. Press `/` to focus search, `f` to show
 filters, `Esc` to clear or return to results, `j`/`k` to browse,
-`g`/`G` for the first or last result, `l` for details, `h` to return, `n` to load
-more results and `?` for shortcuts.
+`g`/`G` for the first or last result, `Enter` or `l` for details, `h` to return,
+`n` to load more results and `u` to rediscover feeds or sync due sources. Narrow
+terminals stack the filter controls vertically.
 It works over SSH with `ssh -t server 'cd /path/to/jobsh && uv run jobsh tui'`.
 
 ## Adding a provider

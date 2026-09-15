@@ -109,7 +109,7 @@ def _verify_source(source: tuple[str, str], adapter: Adapter, timeout: float):
 def discover(
     provider: str, limit: int, workers: int, timeout: float, known_accounts: set[str] | None = None,
     states: dict[str, dict] | None = None, database: sqlite3.Connection | None = None,
-    collections: int = 1,
+    collections: int = 1, show_progress: bool = True, report: bool = True,
 ) -> list[tuple[str, str, str]]:
     if limit < 0 or workers < 1 or timeout <= 0:
         raise ValueError("limit must be >= 0; workers and timeout must be > 0")
@@ -141,7 +141,7 @@ def discover(
         account: (account, url)
         for account, url in retries + fresh
     }
-    with display() as progress:
+    with display(show_progress) as progress:
         crawl = progress.add_task("Discovering candidates", total=None)
         pending = []
         if len(candidates) < candidate_limit:
@@ -210,5 +210,6 @@ def discover(
                     if candidate is not None:
                         futures[pool.submit(verify_source, candidate)] = candidate
             results.sort()
-    print(f"verified {len(results)} feeds", file=sys.stderr)
+    if report:
+        print(f"verified {len(results)} feeds", file=sys.stderr)
     return results

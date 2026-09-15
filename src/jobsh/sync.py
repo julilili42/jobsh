@@ -88,13 +88,13 @@ def _sync_sources(
 
 def sync(
     database: sqlite3.Connection, timeout: float, workers: int = 32, limit: int = 0,
-    provider: str | None = None,
+    provider: str | None = None, show_progress: bool = True,
 ) -> tuple[int, int]:
     if timeout <= 0 or workers < 1 or limit < 0:
         raise ValueError("timeout and workers must be > 0; limit must be >= 0")
     now = datetime.now(UTC).isoformat()
     succeeded = total = 0
-    with display() as progress:
+    with display(show_progress) as progress:
         task = progress.add_task("Syncing sources", total=_due_source_count(database, now, limit, provider))
         while not limit or total < limit:
             sources = _due_sources(
