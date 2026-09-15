@@ -96,7 +96,7 @@ Existing jobs are preserved; legacy classification columns are ignored.
 
 Run `uv run jobsh tui` to search and read jobs with the keyboard. The TUI uses the
 same database and filters as `jobsh search`; it supports text, title, location and
-work-mode filters. Press `/` to focus search, `f` for filters, `j`/`k` to browse,
+work-mode filters. Press `/` to focus search, `f` to show filters, `j`/`k` to browse,
 `g`/`G` for the first or last result, `l` for details, `h` to return, `n` to load
 more results and `?` for shortcuts.
 It works over SSH with `ssh -t server 'cd /path/to/jobsh && uv run jobsh tui'`.

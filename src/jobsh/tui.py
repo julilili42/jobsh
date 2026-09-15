@@ -62,17 +62,17 @@ class JobshApp(App[None]):
 
     CSS = """
     Screen { background: $background; }
-    #topbar { height: 2; padding: 0 2; background: $surface; content-align: left middle; }
+    #topbar { height: 3; padding: 0 2; background: $surface; content-align: left middle; }
     #brand { width: 9; text-style: bold; color: $accent; }
-    #subtitle, #count { color: $text-muted; }
+    #count { color: $text-muted; }
     #count { width: 1fr; content-align: right middle; }
+    #query { width: 1fr; }
     #filters { height: 3; padding: 0 2; layout: horizontal; background: $surface; border-bottom: solid $primary 10%; }
+    #filter-label { width: 9; color: $text-muted; content-align: left middle; }
     Input { width: 1fr; margin-right: 1; }
-    #query { width: 2fr; }
     Select { width: 24; margin-right: 1; }
     #shell { height: 1fr; layout: grid; grid-size: 2; grid-columns: 2fr 3fr; }
     #results-pane { border-right: solid $primary 10%; }
-    #results-title, #details-title { height: 2; padding: 0 2; color: $text-muted; }
     ListView { height: 1fr; padding: 0 1; background: $background; }
     ListItem { padding: 1 1; margin: 0; border-bottom: solid $primary 5%; }
     #more { width: 1fr; height: 1; margin: 0; border: none; background: $background; color: $text-muted; }
@@ -82,7 +82,7 @@ class JobshApp(App[None]):
     """
     BINDINGS = [
         ("/", "focus_search", "Search"),
-        ("f", "focus_filters", "Filters"),
+        ("f", "toggle_filters", "Filters"),
         ("n", "load_more", "More"),
         ("escape", "focus_results", "Results"),
         ("question_mark", "help", "Help"),
@@ -98,25 +98,24 @@ class JobshApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Horizontal(
-            Static("jobsh", id="brand"), Static("Search", id="subtitle"), Static("", id="count"), id="topbar",
+            Static("jobsh", id="brand"), Input(placeholder="Search jobs", id="query"), Static("", id="count"), id="topbar",
         )
         with Horizontal(id="filters"):
-            yield Input(placeholder="Search jobs · Enter", id="query")
+            yield Static("Filters", id="filter-label")
             yield Input(placeholder="Title", id="title")
             yield Input(placeholder="Location", id="location")
             yield Select(MODES, value="", id="work-mode")
         with Horizontal(id="shell"):
             with Vertical(id="results-pane"):
-                yield Static("RESULTS", id="results-title")
                 yield JobList(id="results")
                 yield Button("n  Load more", id="more", variant="default")
             with JobDetails(id="details-pane"):
-                yield Static("DETAIL", id="details-title")
                 yield Static("Search to browse open jobs.", id="detail")
-        yield Static("/ search · f filters · j/k browse · l detail · ? help", id="status")
+        yield Static("/ search · f filters · j/k navigate · l preview · ? help", id="status")
 
     def on_mount(self) -> None:
         self._set_layout(self.size.width)
+        self.query_one("#filters").display = False
         self.query_one("#query", Input).focus()
         self._start_search()
 
@@ -148,10 +147,17 @@ class JobshApp(App[None]):
     def action_focus_search(self) -> None:
         self.query_one("#query", Input).focus()
 
-    def action_focus_filters(self) -> None:
-        self.query_one("#title", Input).focus()
+    def action_toggle_filters(self) -> None:
+        filters = self.query_one("#filters")
+        filters.display = not filters.display
+        if filters.display:
+            self.query_one("#title", Input).focus()
+        else:
+            self.action_focus_results()
 
     def action_focus_results(self) -> None:
+        if self.query_one("#filters").display:
+            self.query_one("#filters").display = False
         self.query_one("#results", JobList).focus()
 
     def action_load_more(self) -> None:
@@ -160,7 +166,7 @@ class JobshApp(App[None]):
 
     def action_help(self) -> None:
         self.notify(
-            "Filters: / search · f filters · Enter apply\n"
+            "Search: / focus · Enter apply · f show or hide filters\n"
             "Results: j/k move · g/G first/last · Ctrl-U/D page · l details\n"
             "Details: j/k scroll · g/G top/bottom · h results · n more · Esc results",
             title="Keyboard shortcuts",
@@ -217,7 +223,7 @@ class JobshApp(App[None]):
         if self.jobs:
             await results.extend(self._result_item(job) for job in self.jobs)
             results.index = 0
-            self.query_one("#status", Static).update(f"{len(self.jobs)} jobs loaded")
+            self.query_one("#status", Static).update("j/k navigate · l preview · n more · ? help")
             self.query_one("#count", Static).update(f"{len(self.jobs)} results")
         else:
             await results.append(ListItem(Static("No open jobs match these filters."), disabled=True))
