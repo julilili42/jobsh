@@ -7,6 +7,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.timer import Timer
 from textual.widgets import Button, Input, ListItem, ListView, Select, Static
 
 from .db import connect_readonly
@@ -15,6 +16,18 @@ from .search import get_job, search
 
 MODES = (("All work modes", ""), ("Remote", "remote"), ("Hybrid", "hybrid"),
          ("On-site", "onsite"), ("Unknown", "unknown"))
+
+
+class SearchInput(Input):
+    """Text input that clears before leaving the search flow."""
+
+    BINDINGS = Input.BINDINGS + [Binding("escape", "clear_or_results", show=False)]
+
+    def action_clear_or_results(self) -> None:
+        if self.value:
+            self.value = ""
+        else:
+            self.app.action_focus_results()
 
 
 class JobList(ListView):
@@ -62,14 +75,16 @@ class JobshApp(App[None]):
 
     CSS = """
     Screen { background: $background; }
-    #topbar { height: 3; padding: 0 2; background: $surface; content-align: left middle; }
-    #brand { width: 9; text-style: bold; color: $accent; }
+    #topbar { height: 3; padding: 0 2; background: $surface; content-align: left middle; border-bottom: solid $primary 10%; }
+    #brand { width: 8; text-style: bold; color: $accent; }
+    #prompt { width: 2; color: $accent; content-align: center middle; }
     #count { color: $text-muted; }
     #count { width: 1fr; content-align: right middle; }
     #query { width: 1fr; }
     #filters { height: 3; padding: 0 2; layout: horizontal; background: $surface; border-bottom: solid $primary 10%; }
     #filter-label { width: 9; color: $text-muted; content-align: left middle; }
-    Input { width: 1fr; margin-right: 1; }
+    Input { width: 1fr; margin-right: 1; border: none; background: transparent; }
+    Input:focus { border-bottom: tall $accent; }
     Select { width: 24; margin-right: 1; }
     #shell { height: 1fr; layout: grid; grid-size: 2; grid-columns: 2fr 3fr; }
     #results-pane { border-right: solid $primary 10%; }
@@ -95,15 +110,18 @@ class JobshApp(App[None]):
         self.next_cursor: int | None = None
         self.search_version = 0
         self.selected_id: int | None = None
+        self.search_timer: Timer | None = None
+        self.work_mode = ""
 
     def compose(self) -> ComposeResult:
         yield Horizontal(
-            Static("jobsh", id="brand"), Input(placeholder="Search jobs", id="query"), Static("", id="count"), id="topbar",
+            Static("jobsh", id="brand"), Static("›", id="prompt"),
+            SearchInput(placeholder="Search jobs", id="query"), Static("", id="count"), id="topbar",
         )
         with Horizontal(id="filters"):
             yield Static("Filters", id="filter-label")
-            yield Input(placeholder="Title", id="title")
-            yield Input(placeholder="Location", id="location")
+            yield SearchInput(placeholder="Title", id="title")
+            yield SearchInput(placeholder="Location", id="location")
             yield Select(MODES, value="", id="work-mode")
         with Horizontal(id="shell"):
             with Vertical(id="results-pane"):
@@ -131,10 +149,17 @@ class JobshApp(App[None]):
         results.styles.height = 14 if narrow else "1fr"
 
     def on_input_submitted(self, _: Input.Submitted) -> None:
+        self._cancel_scheduled_search()
         self._start_search()
 
-    def on_select_changed(self, _: Select.Changed) -> None:
-        self._start_search()
+    def on_input_changed(self, _: Input.Changed) -> None:
+        self._schedule_search()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if str(event.value) == self.work_mode:
+            return
+        self.work_mode = str(event.value)
+        self._schedule_search()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "more":
@@ -154,6 +179,19 @@ class JobshApp(App[None]):
             self.query_one("#title", Input).focus()
         else:
             self.action_focus_results()
+
+    def _schedule_search(self) -> None:
+        self._cancel_scheduled_search()
+        self.search_timer = self.set_timer(0.15, self._start_scheduled_search)
+
+    def _cancel_scheduled_search(self) -> None:
+        if self.search_timer is not None:
+            self.search_timer.stop()
+            self.search_timer = None
+
+    def _start_scheduled_search(self) -> None:
+        self.search_timer = None
+        self._start_search()
 
     def action_focus_results(self) -> None:
         if self.query_one("#filters").display:

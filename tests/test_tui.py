@@ -25,7 +25,8 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn(app.jobs[0]["title"], str(app.query_one("#detail").render()))
                 results.focus()
                 await pilot.press("j")
-                await pilot.pause(delay=0.1)
+                await pilot.pause(delay=0.25)
+                self.assertEqual(results.index, 1)
                 self.assertEqual(app.selected_id, app.jobs[1]["id"])
                 await pilot.press("g")
                 self.assertEqual(results.index, 0)
@@ -36,9 +37,10 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("f")
                 self.assertEqual(title.value, "f")
                 title.value = "Go Developer"
-                await pilot.press("enter")
-                await pilot.pause(delay=0.1)
+                await pilot.pause(delay=0.2)
                 self.assertEqual([job["title"] for job in app.jobs], ["Go Developer"])
+                await pilot.press("escape")
+                self.assertEqual(title.value, "")
 
 
 if __name__ == "__main__":
