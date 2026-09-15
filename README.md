@@ -96,7 +96,7 @@ Existing jobs are preserved; legacy classification columns are ignored.
 
 Run `uv run jobsh tui` to search and read jobs with the keyboard. The TUI uses the
 same database and filters as `jobsh search`; it searches as you type and supports
-text, title, location and work-mode filters. Press `/` to focus search, `f` to show
+text, location and work-mode filters. Press `/` to focus search, `f` to show
 filters, `Esc` to return to results without clearing the query, `j`/`k` to browse,
 `g`/`G` for the first or last result, `Enter` or `l` for details, `h` to return,
 `n` to load more results, `o` to open the job website and `u` to refresh a provider.

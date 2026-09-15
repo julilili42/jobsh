@@ -57,15 +57,16 @@ class TuiTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(results.index, 0)
                 await pilot.press("f")
                 self.assertTrue(app.query_one("#filters").display)
-                title = app.query_one("#title", Input)
-                title.focus()
+                location = app.query_one("#location", Input)
+                location.focus()
                 await pilot.press("f")
-                self.assertEqual(title.value, "f")
-                title.value = "Go Developer"
+                self.assertEqual(location.value, "f")
+                location.value = "Berlin"
                 await pilot.pause(delay=0.2)
-                self.assertEqual([job["title"] for job in app.jobs], ["Go Developer"])
+                self.assertIn("Go Developer", [job["title"] for job in app.jobs])
+                self.assertIn("Berlin", str(app.query_one("#active-filters").render()))
                 await pilot.press("escape")
-                self.assertEqual(title.value, "Go Developer")
+                self.assertEqual(location.value, "Berlin")
                 self.assertIs(app.focused, results)
 
     async def test_load_more_keeps_the_selected_result(self):

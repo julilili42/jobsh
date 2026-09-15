@@ -91,19 +91,23 @@ class JobshApp(App[None]):
     #topbar { height: 3; padding: 0 2; background: $surface; content-align: left middle; border-bottom: solid $primary 10%; }
     #brand { width: 8; text-style: bold; color: $accent; }
     #prompt { width: 2; color: $accent; content-align: center middle; }
-    #count { color: $text-muted; }
-    #count { width: 1fr; content-align: right middle; }
+    #count, #active-filters { color: $text-muted; }
+    #count { width: auto; content-align: right middle; }
+    #active-filters { width: auto; margin-right: 2; }
     #query { width: 1fr; }
     #filters, #updates { height: 3; padding: 0 2; layout: horizontal; background: $surface; border-bottom: solid $primary 10%; }
     Input { width: 30; margin-right: 1; border: none; background: transparent; }
     Input:focus { border-bottom: tall $accent; }
     Select { width: 20; margin-right: 1; border: none; background: transparent; }
     Select:focus { border-bottom: tall $accent; }
+    .toolbar-label { width: 8; color: $text-muted; content-align: left middle; text-style: bold; }
+    #filters Input { width: 26; }
+    #filters Select { width: 18; }
     #updates Button { margin-right: 1; }
     #shell { height: 1fr; layout: grid; grid-size: 2; grid-columns: 2fr 3fr; }
     #results-pane { border-right: solid $primary 10%; }
     ListView { height: 1fr; padding: 0 1; background: $background; }
-    ListItem { padding: 0 1; margin: 0; }
+    ListItem { padding: 0 1 1 1; margin: 0; }
     #more { width: 1fr; height: 1; margin: 0; border: none; background: $background; color: $text-muted; }
     #details-pane { height: 1fr; }
     #detail { height: auto; padding: 1 2; }
@@ -133,10 +137,11 @@ class JobshApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Horizontal(
             Static("jobsh", id="brand"), Static("›", id="prompt"),
-            SearchInput(placeholder="Search jobs", id="query"), Static("", id="count"), id="topbar",
+            SearchInput(placeholder="Search jobs", id="query"), Static("", id="active-filters"),
+            Static("", id="count"), id="topbar",
         )
         with Horizontal(id="filters"):
-            yield SearchInput(placeholder="Title", id="title")
+            yield Static("FILTER", classes="toolbar-label")
             yield SearchInput(placeholder="Location", id="location")
             yield Select(MODES, value="", id="work-mode")
         with Horizontal(id="updates"):
@@ -178,14 +183,13 @@ class JobshApp(App[None]):
         narrow = width < 70
         toolbar.styles.layout = "vertical" if narrow else "horizontal"
         toolbar.styles.height = 9 if narrow else 3
-        toolbar.styles.width = "1fr" if narrow else (88 if selector == "#filters" else 40)
+        toolbar.styles.width = "1fr" if narrow else (60 if selector == "#filters" else 40)
         for child in toolbar.children:
             child.styles.width = "1fr" if narrow else None
         if not narrow:
             if selector == "#filters":
-                self.query_one("#title", Input).styles.width = 30
-                self.query_one("#location", Input).styles.width = 30
-                self.query_one("#work-mode", Select).styles.width = 20
+                self.query_one("#location", Input).styles.width = 26
+                self.query_one("#work-mode", Select).styles.width = 18
             else:
                 self.query_one("#provider", Select).styles.width = 20
                 self.query_one("#refresh", Button).styles.width = "auto"
@@ -194,7 +198,9 @@ class JobshApp(App[None]):
         self._cancel_scheduled_search()
         self._start_search()
 
-    def on_input_changed(self, _: Input.Changed) -> None:
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "location":
+            self._show_active_filters()
         self._schedule_search()
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -203,6 +209,7 @@ class JobshApp(App[None]):
         if str(event.value) == self.work_mode:
             return
         self.work_mode = str(event.value)
+        self._show_active_filters()
         self._schedule_search()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -225,7 +232,7 @@ class JobshApp(App[None]):
         self._set_layout(self.size.width)
         filters.display = not filters.display
         if filters.display:
-            self.query_one("#title", Input).focus()
+            self.query_one("#location", Input).focus()
         else:
             self.action_focus_results()
 
@@ -307,7 +314,7 @@ class JobshApp(App[None]):
         mode = self.query_one("#work-mode", Select).value
         return (
             self.query_one("#query", Input).value,
-            self.query_one("#title", Input).value,
+            "",
             self.query_one("#location", Input).value,
             str(mode) or None,
         )
@@ -369,7 +376,14 @@ class JobshApp(App[None]):
             self.query_one("#detail", Static).update("Try a broader search or clear a filter.")
             self.query_one("#status", Static).update("No matching jobs")
             self.query_one("#count", Static).update("")
+        self._show_active_filters()
         self.query_one("#more", Button).display = self.next_cursor is not None
+
+    def _show_active_filters(self) -> None:
+        mode = str(self.query_one("#work-mode", Select).value)
+        filters = [self.query_one("#location", Input).value, mode.title() if mode else ""]
+        state = self.query_one("#active-filters", Static)
+        state.update(" · ".join(filter(None, filters)))
 
     @staticmethod
     def _result_item(job: dict) -> ListItem:
